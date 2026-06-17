@@ -523,9 +523,9 @@ export default function App() {
               <div style={{ marginTop: '12px', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                 <p style={{ margin: '0 0 12px 0' }}>
                   Run these commands on the machine that will host the Agent Home
-                  bridge (your laptop, a server, etc.). The port must match the
-                  <strong> Backend URL</strong> above — the example below uses{' '}
-                  <code style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '1px 6px', borderRadius: '4px' }}>8765</code>.
+                  bridge (your laptop, a server, etc.). Pick a port for the
+                  bridge and make sure the <strong>Backend URL</strong> above
+                  uses the same port.
                 </p>
 
                 <div style={{ marginBottom: '12px' }}>
@@ -534,7 +534,9 @@ export default function App() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'stretch', gap: '8px' }}>
                     <code style={{
+                      display: 'block',
                       flex: 1,
+                      minWidth: 0,
                       background: 'rgba(15, 23, 42, 0.6)',
                       padding: '10px 12px',
                       borderRadius: '6px',
@@ -549,7 +551,7 @@ export default function App() {
                       type="button"
                       className="btn"
                       onClick={() => copyToClipboard('npm install -g even-agent-home', 'install')}
-                      style={{ flexShrink: 0, minWidth: '72px' }}
+                      style={{ flexShrink: 0, width: 'auto', minWidth: '72px' }}
                     >
                       {copiedCommand === 'install' ? 'Copied!' : 'Copy'}
                     </button>
@@ -562,7 +564,9 @@ export default function App() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'stretch', gap: '8px' }}>
                     <code style={{
+                      display: 'block',
                       flex: 1,
+                      minWidth: 0,
                       background: 'rgba(15, 23, 42, 0.6)',
                       padding: '10px 12px',
                       borderRadius: '6px',
@@ -577,7 +581,7 @@ export default function App() {
                       type="button"
                       className="btn"
                       onClick={() => copyToClipboard('even-agent-home --token my-secret --port 8765', 'start')}
-                      style={{ flexShrink: 0, minWidth: '72px' }}
+                      style={{ flexShrink: 0, width: 'auto', minWidth: '72px' }}
                     >
                       {copiedCommand === 'start' ? 'Copied!' : 'Copy'}
                     </button>
