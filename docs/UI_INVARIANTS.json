@@ -1,0 +1,70 @@
+{
+  "screens": {
+    "loading": { "state": { "screen": "loading" } },
+    "agents": { "state": { "screen": "sidebar.agents" } },
+    "sessions": { "state": { "screen": "sidebar.sessions" } },
+    "messages": { "state": { "screen": "sidebar.messages" } },
+    "recording": { "state": { "screen": "sidebarRecording" } },
+    "confirm": { "state": { "screen": "sidebarConfirm" } }
+  },
+  "steps": [
+    { "name": "down_to_oh-my-pi", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_oh-my-pi", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_oh-my-pi", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_codex", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_codex", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_codex", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_opencode", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_opencode", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_opencode", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_antigravity", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_antigravity", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_antigravity", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_pi", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_pi", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_pi", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_hermes", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_hermes", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_hermes", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_claude", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_claude", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_claude", "input": "double_click", "target": "agents", "budgetMs": 1000 },
+    { "name": "down_to_claudely", "input": "down", "target": "agents", "budgetMs": 1000 },
+    { "name": "open_claudely", "input": "click", "target": "sessions", "budgetMs": 3000 },
+    { "name": "back_from_claudely", "input": "double_click", "target": "agents", "budgetMs": 1000 }
+  ],
+  "asyncSessionInvariants": {
+    "description": "Contracts every provider and the controller must uphold after prompt(). These are tested by test-provider-contracts.mjs and test-controller-races.mjs.",
+    "sessionIdContracts": {
+      "promptReturnsResolvableId": "/prompt must return a sessionId that /status and /history both accept. Tested: test-provider-contracts.mjs Contract 2.",
+      "canonicalIdResolution": "If a provider returns a temporary ID before discovering a canonical ID, both must resolve consistently in /status and /history until the frontend switches. Tested: test-provider-contracts.mjs Contract 2b-c.",
+      "idResolutionConsistency": "/status, /history, and /sessions must use the same ID resolution path. No mismatched aliases. Tested: test-provider-contracts.mjs Contract 4.",
+      "reopenPreservesMessages": "Reopening a session from /sessions must return the same conversation that the active sessionId saw. Tested: test-provider-contracts.mjs Contract 4."
+    },
+    "messageDeliveryContracts": {
+      "assistantEventuallyVisible": "After send, active screen must eventually show assistant response, partial response, or agent error. Navigation away and back must not be the only path to see new content. Tested: test-controller-races.mjs Race 1,6.",
+      "userMessageNeverDropped": "User message must remain visible while backend history is empty or stale. History must never shrink below local count. Tested: test-controller-races.mjs Race 2.",
+      "historyDoesNotRegress": "Backend history must never permanently regress the active message list. Shrinks are tolerated only temporarily. Tested: test-controller-races.mjs Race 2.",
+      "idleMustCoincideWithContent": "status=idle after a prompt must eventually coincide with assistant content or explicit error in history. Tested: test-provider-contracts.mjs Contract 3."
+    },
+    "pollingContracts": {
+      "noSilentPollErrors": "Poll exceptions must be observable (console.error, not empty catch). Test mode must surface them. Tested: controller catches now log errors.",
+      "singleFailureNotWedging": "A single failed /status or /history poll must not permanently freeze the UI. Next poll must recover. Tested: test-controller-races.mjs Race 3.",
+      "activeScreenKeepsPolling": "Active message screen must keep polling until turn reaches terminal state (idle + content or error). Tested: test-polling-controller.mjs.",
+      "thinkingClearsWithoutNavigation": "Agent is working status must clear without requiring back-to-sessions-and-reopen. Tested: test-controller-races.mjs Race 1.",
+      "sessionIdUpdatesMidPoll": "If canonical ID becomes known mid-session, message screen must adopt it. Tested: test-controller-races.mjs Race 4."
+    },
+    "providerContracts": {
+      "getStatusUnknownDoesNotThrow": "getStatus(unknownId) must return null or {state:'idle'}, never throw 500. Tested: test-provider-contracts.mjs Contract 1.",
+      "getHistoryUnknownReturnsEmpty": "getHistory(unknownId) must return [] or structured error, not throw. Tested: test-provider-contracts.mjs Contract 1.",
+      "promptRejectsBusySession": "prompt() on an active session must reject with 409. Tested: implicit in provider prompt logic.",
+      "inMemoryBeforePersistence": "Providers with external persisted storage (oh-my-pi, pi) must expose in-memory partial/final text before persistence catches up. Tested: test-polling-controller.mjs.",
+      "sessionCacheInvalidation": "Session list cache must invalidate or merge active sessions after prompt starts/finishes. Tested: implicit in listSessions TTL."
+    },
+    "errorVisibilityContracts": {
+      "agentErrorReachesUI": "Agent errors from provider/status/result must reach agentError field or visible message UI. Tested: glasses footer shows '| Agent Error'.",
+      "emptyCatchesDisallowedInTest": "Empty catch blocks are disallowed in controller paths. All must log. Tested: all 6 catches now log with context prefix.",
+      "harnessFailsOnSwallowed": "Test harness must detect and fail on swallowed poll exceptions. The controller race test simulates thrown status errors."
+    }
+  }
+}

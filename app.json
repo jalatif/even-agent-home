@@ -1,0 +1,27 @@
+{
+  "package_id": "com.evenrealities.agenthome",
+  "edition": "202601",
+  "name": "Agent Home",
+  "version": "1.0.0",
+  "min_app_version": "2.0.0",
+  "min_sdk_version": "0.0.10",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Connects Agent Home to the local agent backend server.",
+      "whitelist": [
+        "http://localhost:3456",
+        "http://127.0.0.1:3456",
+        "http://<BACKEND_URL>:3456"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Records voice queries to send to agents."
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
+}
