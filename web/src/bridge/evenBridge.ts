@@ -21,7 +21,9 @@ export type AuthConfig = any;
 
 
 const encoder = new TextEncoder()
-export const APP_BUILD_VERSION: string = '1.0.1'
+// Injected by Vite define from app.json — single source of truth for version.
+declare const __APP_VERSION__: string
+export const APP_BUILD_VERSION: string = __APP_VERSION__
 
 
 let activeEventListenerToken: symbol | undefined
