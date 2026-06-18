@@ -94,7 +94,8 @@ export function getScreenModel(state: AppState): ScreenModel {
     case 'loading':
       return { kind: 'text', title: 'AgentHome', body: state.message }
     case 'sidebar.agents': {
-      const agentItems = state.agents.length ? state.agents : ['No agents found']
+      const isEmpty = state.agents.length === 0
+      const agentItems = isEmpty ? ['No agents found', 'Configure backend in Settings'] : state.agents
       const windowStart = Math.max(0, Math.min(state.selectedAgentIndex - 3, agentItems.length - 7))
       const visibleAgents = agentItems.slice(windowStart, windowStart + 7)
       const agentList = visibleAgents.map((ag, i) => (windowStart + i === state.selectedAgentIndex ? `> ${ag}` : `  ${ag}`)).join('\n')

@@ -412,10 +412,21 @@ export default function App() {
         <div className="glasses-screen">
           <div className="glasses-header">Select Agent</div>
           <ul className="glasses-list">
-            {screenState.agents.length === 0 && <li className="glasses-item">No agents found</li>}
+            {screenState.agents.length === 0 && (
+              <>
+                <li className="glasses-item">No agents found</li>
+                <li
+                  className="glasses-item"
+                  style={{ opacity: 0.7, cursor: 'pointer' }}
+                  onClick={() => setActiveTab('settings')}
+                >
+                  Configure backend in Settings →
+                </li>
+              </>
+            )}
             {screenState.agents.map((ag, i) => (
-              <li 
-                key={ag} 
+              <li
+                key={ag}
                 className={`glasses-item ${screenState.selectedAgentIndex === i ? 'selected' : ''}`}
                 onClick={() => controller?.handleInput({ type: 'press', index: i })}
               >
