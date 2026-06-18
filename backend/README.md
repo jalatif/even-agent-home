@@ -1,6 +1,6 @@
 # even-agent-home
 
-The backend bridge for **Agent Home** — connects multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi, claudely) to the [Even Realities](https://www.evenrealities.com) G2 smart glasses client over a local HTTP/WS bridge.
+The backend bridge for **Agent Home** — connects multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi) to the [Even Realities](https://www.evenrealities.com) G2 smart glasses client over a local HTTP/WS bridge.
 
 This is the server half. The glasses-side web app lives in the parent repository at [`web/`](../web).
 
@@ -39,7 +39,7 @@ Paste that URL (or scan the QR code printed alongside it) into the Agent Home gl
 
 ## Environment
 
-The bridge auth token is **not** read from the environment — pass it with `--token` or let the CLI generate one. All other settings are env-configurable and can be set in a `.env` file in the working directory.
+The bridge auth token is **not** read from the environment — pass it with `--token` or let the CLI generate one. All other settings below are read from the real process environment (or their matching CLI flags).
 
 | `PORT` | `3456` | Port to listen on (overridden by `--port`) |
 | `HOST` | `0.0.0.0` | Interface to bind. Defaults to all interfaces so the bridge is reachable from the LAN (e.g. G2 glasses on the same Wi-Fi). Pass `127.0.0.1` to bind loopback only — auth (the `--token`) is still required, but the wider bind does increase the surface area for attackers on the same network. |
@@ -66,7 +66,6 @@ Each agent is launched via its own CLI tool that must be on `$PATH` for the corr
 | `hermes` | bundled (no external dep) |
 | `antigravity` | `gemini` |
 | `oh-my-pi` | bundled |
-| `claudely` | bundled |
 | `pi` | bundled |
 
 ## API surface

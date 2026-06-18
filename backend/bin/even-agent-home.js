@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
-// Load non-token environment variables (PORT, HOST, EVEN_HOST_MODE, etc.)
-// from .env if present. The bridge auth token is *not* read from .env —
-// pass it with --token or let the CLI generate one.
-import "dotenv/config";
-
+// Non-token settings (PORT, HOST, EVEN_HOST_MODE, ALLOW_QUERY_TOKEN,
+// PROJECT_DIR, etc.) are read from the real process environment or the
+// matching CLI flags below. The bridge auth token is *not* read from the
+// environment — pass it with --token or let the CLI generate one.
 import { randomBytes } from "node:crypto";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
