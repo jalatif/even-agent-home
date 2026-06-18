@@ -1,11 +1,11 @@
 {
   "name": "even-agent-home",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Agent Home backend — HTTP bridge server that exposes multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi, claudely) to the Agent Home glasses client.",
   "main": "src/index.js",
   "type": "module",
   "bin": {
-    "even-agent-home": "./bin/even-agent-home.js"
+    "even-agent-home": "bin/even-agent-home.js"
   },
   "files": [
     "bin",
@@ -36,7 +36,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jalatif/even-agent-home.git",
+    "url": "git+https://github.com/jalatif/even-agent-home.git",
     "directory": "backend"
   },
   "bugs": {
