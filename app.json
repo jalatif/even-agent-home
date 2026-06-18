@@ -2,7 +2,7 @@
   "package_id": "com.evenrealities.agenthome",
   "edition": "202601",
   "name": "Agent Home",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "min_app_version": "2.0.0",
   "min_sdk_version": "0.0.10",
   "entrypoint": "index.html",
@@ -13,7 +13,9 @@
       "whitelist": [
         "http://localhost:3456",
         "http://127.0.0.1:3456",
-        "http://<BACKEND_URL>:3456"
+        "http://<BACKEND_URL>:3456",
+        "http://www.w3.org/2000/svg",
+        "http://www.w3.org/1999/xlink"
       ]
     },
     {
