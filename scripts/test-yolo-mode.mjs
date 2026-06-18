@@ -61,12 +61,6 @@ console.log("  ✓ Codex auto-approval correct");
 // ── Test 4: CLI provider flag decision ──────────────────────
 console.log("\n── Test 4: CLI provider flag decision ──");
 
-function buildClaudelyArgs(yolo) {
-    const args = ["claude", "--verbose"];
-    if (yolo) args.push("--dangerously-skip-permissions");
-    return args;
-}
-
 function buildOpencodeArgs(yolo) {
     const args = ["run", "--format", "json"];
     if (yolo) args.push("--dangerously-skip-permissions");
@@ -84,19 +78,6 @@ function buildOmpArgs(yolo) {
     if (yolo) args.push("--auto-approve");
     return args;
 }
-
-// Claudely
-{
-    const argsTrue = buildClaudelyArgs(true);
-    assert.ok(argsTrue.includes("--dangerously-skip-permissions"), "claudely yolo=true → flag present");
-
-    const argsFalse = buildClaudelyArgs(false);
-    assert.ok(!argsFalse.includes("--dangerously-skip-permissions"), "claudely yolo=false → flag absent");
-
-    const argsUndef = buildClaudelyArgs(undefined);
-    assert.ok(!argsUndef.includes("--dangerously-skip-permissions"), "claudely yolo=undefined → flag absent");
-}
-console.log("  ✓ Claudely");
 
 // Opencode
 {

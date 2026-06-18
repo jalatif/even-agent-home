@@ -18,12 +18,9 @@ import './style.css'
 
 function formatModelName(m: string): string {
   if (m === '') return 'Default'
-  if (m === 'claude-3-5-sonnet-20241022') return 'Sonnet 3.5 (New)'
-  if (m === 'claude-3-5-sonnet-20240620') return 'Sonnet 3.5'
-  if (m === 'claude-3-opus-20240229') return 'Opus 3'
-  if (m === 'claude-3-haiku-20240307') return 'Haiku 3'
-  if (m === 'claude-3-5-haiku-20241022') return 'Haiku 3.5'
-  
+
+  // Modern claude model names (claude-opus-4-5, claude-sonnet-4-6, …) — handle
+  // via the generic regex below rather than hardcoding each dated variant.
   if (m.startsWith('claude-')) {
     const match = m.match(/^claude-(\d+)(?:-(\d+))?-(opus|sonnet|haiku)(?:-.*)?$/i);
     if (match) {
@@ -36,10 +33,7 @@ function formatModelName(m: string): string {
 
   if (m.startsWith('gpt-4o')) return 'GPT-4o'
   if (m === 'gpt-4-turbo') return 'GPT-4 Turbo'
-  if (m === 'gpt-3.5-turbo') return 'GPT-3.5 Turbo'
   if (m === 'gpt-4') return 'GPT-4'
-  if (m === 'claudely-local') return 'Local'
-  if (m === 'claudely-cloud') return 'Cloud'
   return m.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
@@ -264,7 +258,7 @@ export default function App() {
     api.getAgents().then(async (data: any[]) => {
       if (isCancelled()) return
       const agentStatuses: AgentStatus[] = data.map(d => typeof d === 'string' ? { id: d, available: true } : d);
-      const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes', 'claudely'];
+      const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes'];
       agentStatuses.sort((a, b) => {
         const ia = PREFERRED_ORDER.indexOf(a.id);
         const ib = PREFERRED_ORDER.indexOf(b.id);

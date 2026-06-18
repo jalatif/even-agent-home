@@ -28,10 +28,7 @@
     { "name": "back_from_hermes", "input": "double_click", "target": "agents", "budgetMs": 1000 },
     { "name": "down_to_claude", "input": "down", "target": "agents", "budgetMs": 1000 },
     { "name": "open_claude", "input": "click", "target": "sessions", "budgetMs": 3000 },
-    { "name": "back_from_claude", "input": "double_click", "target": "agents", "budgetMs": 1000 },
-    { "name": "down_to_claudely", "input": "down", "target": "agents", "budgetMs": 1000 },
-    { "name": "open_claudely", "input": "click", "target": "sessions", "budgetMs": 3000 },
-    { "name": "back_from_claudely", "input": "double_click", "target": "agents", "budgetMs": 1000 }
+    { "name": "back_from_claude", "input": "double_click", "target": "agents", "budgetMs": 1000 }
   ],
   "asyncSessionInvariants": {
     "description": "Contracts every provider and the controller must uphold after prompt(). These are tested by test-provider-contracts.mjs and test-controller-races.mjs.",
