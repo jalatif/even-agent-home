@@ -21,6 +21,10 @@
     {
       "name": "g2-microphone",
       "desc": "Records voice queries to send to agents."
+    },
+    {
+      "name": "camera",
+      "desc": "Scans the backend QR code to pair the glasses via Quick Connect."
     }
   ],
   "supported_languages": [
