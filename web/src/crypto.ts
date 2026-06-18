@@ -35,7 +35,15 @@ export async function encryptPayload(data: string, token: string): Promise<strin
   payload.set(authTag, 12);
   payload.set(actualCiphertext, 28);
   
-  return btoa(String.fromCharCode(...payload));
+  // Chunked conversion to avoid stack overflow on large payloads
+  // (e.g. audio transcription can produce 1MB+ encrypted blobs).
+  // String.fromCharCode(...spread) exceeds the JS argument limit.
+  const CHUNK = 0x8000 // 32K — safely under any engine's arg limit
+  const parts: string[] = []
+  for (let i = 0; i < payload.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...payload.subarray(i, i + CHUNK)))
+  }
+  return btoa(parts.join(''))
 }
 
 export async function decryptPayload(base64String: string, token: string): Promise<string> {
