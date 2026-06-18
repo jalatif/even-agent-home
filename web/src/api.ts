@@ -1,3 +1,5 @@
+import { storageGet, storageSet } from './storage.ts'
+
 export const defaultApiBaseUrl = 'http://localhost:3456'
 
 export interface AuthConfig {
@@ -12,47 +14,142 @@ export interface AuthConfig {
   autoScrollMode?: 'off' | 'slow' | 'medium' | 'fast'
 }
 
-function configFromLocation(): Partial<AuthConfig> {
-  if (typeof window === 'undefined') return {}
-  const params = new URLSearchParams(window.location.search)
-  const token = params.get('token') || undefined
-  const explicitBaseUrl = params.get('baseUrl') || undefined
-  const sameOriginBaseUrl = `${window.location.protocol}//${window.location.host}/api`
-  const tokenBaseUrl = window.location.port === '5173' ? defaultApiBaseUrl : sameOriginBaseUrl
-  const baseUrl = explicitBaseUrl || (token ? tokenBaseUrl : undefined)
-  return { ...(baseUrl ? { baseUrl } : {}), ...(token ? { token } : {}) }
-}
+const API_CONFIG_KEY = 'apiConfig'
+const AGENT_CONFIGS_KEY = 'agentConfigs'
 
+// In-memory cache. The phone WebView can reload the JS bundle at any time
+// (host app rotation, page rebuild, etc.) and we want reads to be sync so
+// the controller can use them on hot paths (scroll, prompt). The async
+// storage functions keep this cache fresh and the persistent store (bridge
+// KV) durable across reloads.
 let currentConfig: AuthConfig = {
   baseUrl: defaultApiBaseUrl,
   token: '',
   autoScrollLastExchange: true,
   scrollSpeed: 'medium',
 }
+let currentAgentConfigs: Record<string, AgentProviderConfig> = {}
+let configHydrated = false
+let agentConfigsHydrated = false
 
-try {
-  const saved = localStorage.getItem('apiConfig')
-  if (saved) {
-    const savedConfig = JSON.parse(saved)
-    currentConfig = { ...currentConfig, ...savedConfig }
-    if (savedConfig.autoScrollMode && savedConfig.autoScrollLastExchange === undefined && savedConfig.scrollSpeed === undefined) {
-      currentConfig.autoScrollLastExchange = savedConfig.autoScrollMode !== 'off'
-      if (savedConfig.autoScrollMode !== 'off') currentConfig.scrollSpeed = savedConfig.autoScrollMode
-    }
+// Reset the in-memory cache back to the initial defaults. Used by tests
+// that need to assert on the "fresh hydration" path; production code
+// never calls this. Exported with an underscored name to signal that
+// it is not part of the public surface.
+export function __resetApiStateForTests(): void {
+  currentConfig = {
+    baseUrl: defaultApiBaseUrl,
+    token: '',
+    autoScrollLastExchange: true,
+    scrollSpeed: 'medium',
   }
-  currentConfig = { ...currentConfig, ...configFromLocation() }
-} catch {
-  // intentionally empty
+  currentAgentConfigs = {}
+  configHydrated = false
+  agentConfigsHydrated = false
 }
 
-export function setApiConfig(config: AuthConfig) {
+function configFromLocation(): { token?: string; explicitBaseUrl?: string } {
+  if (typeof window === 'undefined') return {}
+  const params = new URLSearchParams(window.location.search)
+  return {
+    token: params.get('token') || undefined,
+    explicitBaseUrl: params.get('baseUrl') || undefined,
+  }
+}
+
+// When nothing is saved, the WebView's same-origin URL is a reasonable
+// default for the backend (the bridge typically serves both on the same
+// host). The Vite dev server is a special case where the WebView is on
+// 5173 and the backend lives on the default port.
+function sameOriginBaseUrl(): string {
+  if (typeof window === 'undefined') return defaultApiBaseUrl
+  if (window.location.port === '5173') return defaultApiBaseUrl
+  return `${window.location.protocol}//${window.location.host}/api`
+}
+
+
+function migrateLegacyConfig(parsed: Partial<AuthConfig>): Partial<AuthConfig> {
+  const out: Partial<AuthConfig> = { ...parsed }
+  if (
+    parsed.autoScrollMode &&
+    parsed.autoScrollLastExchange === undefined &&
+    parsed.scrollSpeed === undefined
+  ) {
+    out.autoScrollLastExchange = parsed.autoScrollMode !== 'off'
+    if (parsed.autoScrollMode !== 'off') out.scrollSpeed = parsed.autoScrollMode
+  }
+  delete out.autoScrollMode
+  return out
+}
+
+/**
+ * Read the auth config from the persistent store (bridge KV, with
+ * `localStorage` fallback) and seed the in-memory cache. URL params are
+ * layered ON TOP of the saved config so a deep link refreshes credentials
+ * without wiping unrelated saved fields (yolo, debugView, scroll prefs,
+ * etc.). Idempotent — repeated calls are cheap because they hit the cache
+ * after the first hydration.
+ */
+export async function hydrateApiConfig(): Promise<AuthConfig> {
+  let saved: Partial<AuthConfig> = {}
+  try {
+    const raw = await storageGet(API_CONFIG_KEY)
+    if (raw) saved = migrateLegacyConfig(JSON.parse(raw))
+  } catch (e) {
+    console.warn('[api] failed to read apiConfig from storage', e)
+  }
+  // Layering rules (lowest → highest priority):
+  //   1. Hard defaults (currentConfig's initial values).
+  //   2. The same-origin URL — a "best guess when nothing is saved"
+  //      fill-in for the dev/prod case where the WebView and the
+  //      backend share a host. Only applies when the default URL is
+  //      still in place; once a real host is saved this no longer fires.
+  //   3. Persisted fields (token, baseUrl, yolo, debug, scroll prefs).
+  //      Saved fields ALWAYS win over the same-origin default.
+  //   4. URL params. `?token=` alone refreshes the token without
+  //      rewriting baseUrl. `?baseUrl=` (explicit) overrides saved.
+  const { token, explicitBaseUrl } = configFromLocation()
+  const baseFromDefault = currentConfig.baseUrl === defaultApiBaseUrl
+  currentConfig = {
+    ...currentConfig,
+    ...(baseFromDefault ? { baseUrl: sameOriginBaseUrl() } : {}),
+    ...saved,
+    ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
+    ...(token ? { token } : {}),
+  }
+  configHydrated = true
+  return currentConfig
+}
+
+export async function hydrateAgentConfigs(): Promise<Record<string, AgentProviderConfig>> {
+  try {
+    const raw = await storageGet(AGENT_CONFIGS_KEY)
+    if (raw) currentAgentConfigs = JSON.parse(raw)
+  } catch (e) {
+    console.warn('[api] failed to read agentConfigs from storage', e)
+  }
+  agentConfigsHydrated = true
+  return currentAgentConfigs
+}
+
+export async function setApiConfig(config: AuthConfig): Promise<void> {
   const nextConfig = { ...config }
   delete nextConfig.autoScrollMode
   currentConfig = nextConfig
-  localStorage.setItem('apiConfig', JSON.stringify(nextConfig))
+  try {
+    await storageSet(API_CONFIG_KEY, JSON.stringify(nextConfig))
+  } catch (e) {
+    console.warn('[api] failed to save apiConfig to storage', e)
+  }
 }
 
-export function getApiConfig() {
+export function getApiConfig(): AuthConfig {
+  if (!configHydrated && typeof window !== 'undefined') {
+    // First call before hydration completed — kick off the async hydrate
+    // so a subsequent reload can pick up saved values. We still return the
+    // defaults so the controller has something usable.
+    void hydrateApiConfig()
+  }
   return currentConfig
 }
 
@@ -72,16 +169,18 @@ export interface ModelListResponse {
   error?: string | null
 }
 
-export function getAgentConfigs(): Record<string, AgentProviderConfig> {
-  try {
-    return JSON.parse(localStorage.getItem('agentConfigs') || '{}')
-  } catch {
-    return {}
-  }
+export async function getAgentConfigs(): Promise<Record<string, AgentProviderConfig>> {
+  if (!agentConfigsHydrated) await hydrateAgentConfigs()
+  return currentAgentConfigs
 }
 
-export function saveAgentConfigs(configs: Record<string, AgentProviderConfig>) {
-  localStorage.setItem('agentConfigs', JSON.stringify(configs))
+export async function saveAgentConfigs(configs: Record<string, AgentProviderConfig>): Promise<void> {
+  currentAgentConfigs = configs
+  try {
+    await storageSet(AGENT_CONFIGS_KEY, JSON.stringify(configs))
+  } catch (e) {
+    console.warn('[api] failed to save agentConfigs to storage', e)
+  }
 }
 
 export function getApi() {

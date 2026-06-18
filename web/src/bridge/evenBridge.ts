@@ -26,6 +26,15 @@ export const APP_BUILD_VERSION: string = '1.0.1'
 
 let activeEventListenerToken: symbol | undefined
 
+// Most-recently-created bridge instance. Storage adapter and other modules
+// use this to reach the persistent SDK without prop-drilling. Replaced on
+// every successful `create` so React StrictMode double-invocation and any
+// bridge re-creation always expose the live bridge.
+let activeBridge: EvenHubGlassesBridge | undefined
+export function getActiveBridge(): EvenHubGlassesBridge | undefined {
+  return activeBridge
+}
+
 type EvenBridgeInstance = {
   createStartUpPageContainer(container: unknown): Promise<number>
   rebuildPageContainer(container: unknown): Promise<boolean>
@@ -86,7 +95,7 @@ export class EvenHubGlassesBridge implements GlassesBridge {
       
       if (input) dispatchInput(input)
     })
-    return new EvenHubGlassesBridge(
+    return activeBridge = new EvenHubGlassesBridge(
       sdk,
       typeof unsubscribeEvents === 'function' ? unsubscribeEvents : undefined,
       listenerToken,

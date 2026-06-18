@@ -233,8 +233,8 @@ export class AgentHomeController {
       const allAgentsRaw = await api.getAgents()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const allAgents = allAgentsRaw.map((a: any) => typeof a === 'string' ? { id: a, available: true } : a)
-      const configs = getAgentConfigs()
-      
+      const configs = await getAgentConfigs()
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enabledAgents = allAgents.filter((a: any) => a.available && (configs[a.id] ? configs[a.id].enabled : true)).map((a: any) => a.id)
       this.enabledAgents = enabledAgents;
@@ -242,7 +242,8 @@ export class AgentHomeController {
       this.startPolling(); // Ensure polling is running globally
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      const msg = err.message === 'Load failed' || !localStorage.getItem('apiConfig')
+      const cfg = getApiConfig()
+      const msg = err.message === 'Load failed' || !cfg.baseUrl || !cfg.token
         ? 'Use phone to configure AgentHome connection settings'
         : `Error: ${err.message}`
       this.setState({ screen: 'loading', message: msg })
@@ -566,9 +567,9 @@ export class AgentHomeController {
     
     try {
       const apiConfig = getApiConfig()
-      const configs = getAgentConfigs()
+      const configs = await getAgentConfigs()
       const config = configs[agent]
-      
+
       const res = await getApi().prompt(agent, sessionId, text, config?.model, config?.thinking, apiConfig.yolo)
       // Stay on messages screen with local user message — polling will update with response
       if (this.turnTimeout) clearTimeout(this.turnTimeout)
@@ -605,9 +606,9 @@ export class AgentHomeController {
     
     try {
       const apiConfig = getApiConfig()
-      const configs = getAgentConfigs()
+      const configs = await getAgentConfigs()
       const config = configs[agent]
-      
+
       const res = await getApi().prompt(agent, sessionId, text, config?.model, config?.thinking, apiConfig.yolo)
       // Stay on messages screen with local user message — polling will update with response
       if (this.turnTimeout) clearTimeout(this.turnTimeout)

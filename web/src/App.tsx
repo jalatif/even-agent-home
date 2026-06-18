@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useState, useRef, type ClipboardEvent } from 'react'
-import { getApiConfig, setApiConfig, getApi, getAgentConfigs, saveAgentConfigs } from './api'
+import {
+  getApiConfig,
+  setApiConfig,
+  getApi,
+  getAgentConfigs,
+  saveAgentConfigs,
+  hydrateApiConfig,
+  hydrateAgentConfigs,
+} from './api'
 import type { AgentProviderConfig, AuthConfig } from './api'
 import { AgentHomeController } from './controller/agentHomeController'
 import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import QRScanner from './QRScanner'
+import { registerBridgeStorage } from './storage'
 import './style.css'
 
 function formatModelName(m: string): string {
@@ -58,40 +67,109 @@ function parseConnectionUrl(input: string): { baseUrl: string; token: string } |
 }
 
 export default function App() {
+  // Initial state is the in-memory cache. It is populated synchronously
+  // from defaults; the bridge/localStorage hydration below patches in the
+  // persisted values once available and triggers a re-render.
   const [config, setConfig] = useState<AuthConfig>(getApiConfig())
   const [controller, setController] = useState<AgentHomeController | null>(null)
   const [screenState, setScreenState] = useState<AppState | null>(null)
   const [activeTab, setActiveTab] = useState<'main' | 'settings'>('main')
   const [showQRScanner, setShowQRScanner] = useState(false)
 
+  interface AgentStatus {
+    id: string;
+    available: boolean;
+  }
+
+  const [agents, setAgents] = useState<AgentStatus[]>([])
+  const [modelsByAgent, setModelsByAgent] = useState<Record<string, string[]>>({})
+  // Default to `{}`; the mount effect below populates this with persisted
+  // values once `hydrateAgentConfigs()` resolves from the persistent store.
+  const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentProviderConfig>>({})
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
+  const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
+
   useEffect(() => {
     let unmounted = false
+    // Hydrate from storage before the bridge is ready so the UI never shows
+    // defaults on first paint when persisted values exist.
+    void (async () => {
+      const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
+        hydrateApiConfig(),
+        hydrateAgentConfigs(),
+      ])
+      if (unmounted) return
+      setConfig(hydratedConfig)
+      setAgentConfigs(hydratedAgentConfigs)
+    })()
+
     const ctrl = new AgentHomeController()
-    
+
     EvenHubGlassesBridge.create((input) => ctrl.handleInput(input)).then(bridge => {
       if (unmounted) return
+      // Register the bridge-backed persistent store now that the SDK is
+      // available. Subsequent reads and writes from `api.ts` go through
+      // the bridge (survives WebView reload); `localStorage` is just a
+      // fallback for browser dev.
+      const sdkGet = bridge.getLocalStorage
+      const sdkSet = bridge.setLocalStorage
+      registerBridgeStorage(() => {
+        if (typeof sdkGet !== 'function' || typeof sdkSet !== 'function') return null
+        return {
+          async getItem(key) {
+            try {
+              const v = await sdkGet(key)
+              return v || null
+            } catch (e) {
+              console.warn('[storage] bridge getLocalStorage failed', e)
+              return null
+            }
+          },
+          async setItem(key, value) {
+            try {
+              const ok = await sdkSet(key, value)
+              if (!ok) console.warn('[storage] bridge setLocalStorage returned false', key)
+            } catch (e) {
+              console.warn('[storage] bridge setLocalStorage failed', e)
+            }
+          },
+        }
+      })
+      // Re-hydrate once the bridge is available so the first paint does
+      // not lock in a default before the SDK KV store is consulted.
+      void (async () => {
+        const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
+          hydrateApiConfig(),
+          hydrateAgentConfigs(),
+        ])
+        if (unmounted) return
+        setConfig(hydratedConfig)
+        setAgentConfigs(hydratedAgentConfigs)
+      })()
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ;(ctrl as any).bridge = bridge
       setController(ctrl)
-      
+
       ctrl.subscribe(setScreenState)
       ctrl.boot()
     })
-    
+
     return () => { unmounted = true }
   }, [])
 
   // Auto-persist the connection settings (URL + token + YOLO + debug) to
-  // localStorage on every change so a restart or refresh does not require
-  // re-entering the token. The Save button still exists for explicit
-  // confirmation and to trigger controller.boot() with the new config.
+  // the persistent store on every change so a restart or refresh does not
+  // require re-entering the token. Fire-and-forget; the in-memory cache
+  // is updated synchronously inside `setApiConfig` so subsequent reads
+  // are consistent even if the bridge write is still in flight.
   useEffect(() => {
-    setApiConfig(config)
+    void setApiConfig(config)
   }, [config])
 
   const handleSaveConfig = () => {
-    setApiConfig(config)
-    saveAgentConfigs(agentConfigs)
+    void setApiConfig(config)
+    void saveAgentConfigs(agentConfigs)
     setAgentRefreshNonce(value => value + 1)
     if (controller) controller.boot()
   }
@@ -115,17 +193,6 @@ export default function App() {
     e.preventDefault();
     setConfig(prev => ({ ...prev, baseUrl: parsed.baseUrl, token: parsed.token }));
   }
-
-  interface AgentStatus {
-    id: string;
-    available: boolean;
-  }
-
-  const [agents, setAgents] = useState<AgentStatus[]>([])
-  const [modelsByAgent, setModelsByAgent] = useState<Record<string, string[]>>({})
-  const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentProviderConfig>>(getAgentConfigs())
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
-  const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
 
   // Copy a command string to the clipboard and flash a "Copied!" indicator on
   // the source button for ~1.2s. Falls back to a hidden textarea + execCommand
@@ -158,7 +225,7 @@ export default function App() {
     const api = getApi()
     const refreshModelLists = async (agentStatuses: AgentStatus[], attempt = 0) => {
       const modelsMap: Record<string, string[]> = {}
-      const newConfigs = { ...getAgentConfigs() }
+      const newConfigs = { ...(await getAgentConfigs()) }
       const pending: string[] = []
 
       await Promise.all(agentStatuses.map(async (agent) => {
@@ -184,7 +251,7 @@ export default function App() {
       if (isCancelled()) return
       setModelsByAgent(prev => ({ ...prev, ...modelsMap }))
       setAgentConfigs(newConfigs)
-      saveAgentConfigs(newConfigs)
+      void saveAgentConfigs(newConfigs)
 
       if (pending.length > 0 && attempt < 5) {
         window.setTimeout(() => {
@@ -221,7 +288,7 @@ export default function App() {
     setAgentConfigs(prev => {
       const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
       const next = { ...prev, [agent]: { ...current, enabled: !current.enabled } }
-      saveAgentConfigs(next)
+      void saveAgentConfigs(next)
       return next
     })
   }
@@ -230,7 +297,7 @@ export default function App() {
     setAgentConfigs(prev => {
       const current = prev[agent] ?? { enabled: true, model }
       const next = { ...prev, [agent]: { ...current, model } }
-      saveAgentConfigs(next)
+      void saveAgentConfigs(next)
       return next
     })
   }
@@ -239,7 +306,7 @@ export default function App() {
     setAgentConfigs(prev => {
       const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
       const next = { ...prev, [agent]: { ...current, thinking } }
-      saveAgentConfigs(next)
+      void saveAgentConfigs(next)
       return next
     })
   }
