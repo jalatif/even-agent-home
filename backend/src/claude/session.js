@@ -68,6 +68,7 @@ export class ClaudeSession {
     pendingQuestions = [];
     alwaysAllowedTools = new Set();
     pendingToolCalls = new Map();
+    lastError = null;
     /** Tracks the type of the currently-open content block ("thinking" | "text" | null). */
     currentBlockType = null;
     idResolve = null;
@@ -224,6 +225,7 @@ export class ClaudeSession {
             throw new Error("Session is busy");
         }
         this._busy = true;
+        this.lastError = null;
         this.busyEmitted = false;
         this.currentBlockType = null;
         this.turnStartMs = Date.now();
@@ -288,6 +290,7 @@ export class ClaudeSession {
             catch (err) {
                 if (err.name !== "AbortError") {
                     console.error(`[session] query error: ${err.message}`);
+                    this.lastError = err.message || "Claude query failed";
                     this.send({ type: "error", message: err.message });
                 }
             }
@@ -674,6 +677,7 @@ export class ClaudeSession {
                         resultText = errors;
                         break;
                 }
+            this.lastError = resultText || `Claude run failed: ${r.subtype}`;
         }
         console.log(`[session] Result: subtype=${r.subtype} turns=${r.num_turns ?? 0} cost=$${(r.total_cost_usd ?? 0).toFixed(4)} input=${inputTokens} output=${outputTokens}`);
         this.send({

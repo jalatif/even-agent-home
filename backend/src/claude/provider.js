@@ -139,7 +139,7 @@ export function createClaudeProvider(emit) {
         const session = sessions.get(sessionId);
         if (!session)
             return null;
-        return { state: session.status, provider: "claude" };
+        return { state: session.status, provider: "claude", error: session.lastError || undefined };
     }
     async function getSessionStatus(sessionId) {
         const session = sessions.get(sessionId);

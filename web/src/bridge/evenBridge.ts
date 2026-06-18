@@ -9,7 +9,7 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import type { GlassesBridge } from '../controller/agentHomeController'
 import type { AppInput, ScreenModel } from '../controller/model'
-import { createBoundedInputDispatcher, createInputCoalescer, mapEvenHubEvent } from './eventMapping'
+import { createInputCoalescer, mapEvenHubEvent } from './eventMapping'
 import {
   isFixtureMode,
   logTestEvent,
@@ -21,7 +21,7 @@ export type AuthConfig = any;
 
 
 const encoder = new TextEncoder()
-export const APP_BUILD_VERSION: string = '1.0.0'
+export const APP_BUILD_VERSION: string = '1.0.1'
 
 
 let activeEventListenerToken: symbol | undefined
@@ -54,13 +54,10 @@ export class EvenHubGlassesBridge implements GlassesBridge {
   private stalePartialRenderDropped = 0
   private panelRenderTimer: ReturnType<typeof setTimeout> | undefined
   private lastSidebarModel: Extract<ScreenModel, { kind: 'sidebar' }> | undefined
-  // `panelRenderIdleMs` is the scroll-idle window for the partial-render queue. On real
-  // G2 hardware each `textContainerUpgrade` call is a 150-400ms firmware roundtrip. If
-  // we flush on every microtask boundary, rapid scrolling chains firmware calls and the
-  // glasses feel sluggish. This delay holds the latest panel model until the user stops
-  // scrolling, so 10 rapid swipes produce one latest-state update instead of a queue
-  // of stale sidebar and preview updates.
-  private readonly panelRenderIdleMs = 150
+  // Flush the first partial render immediately so every hardware input gives visible
+  // feedback. While a native render is in flight, `pendingPanelModel` still keeps only
+  // the latest state, preventing slow G2 firmware calls from replaying stale scrolls.
+  private readonly panelRenderIdleMs = 0
   private sdk: EvenBridgeInstance
   private unsubscribeEvents?: () => void
   private listenerToken?: symbol
@@ -77,7 +74,7 @@ export class EvenHubGlassesBridge implements GlassesBridge {
 
   static async create(onInput: (input: AppInput) => void | Promise<void>) {
     const sdk = (await waitForEvenAppBridge()) as unknown as EvenBridgeInstance
-    const dispatchInput = createInputCoalescer(createBoundedInputDispatcher(onInput))
+    const dispatchInput = createInputCoalescer(onInput)
     const listenerToken = Symbol('even-hub-listener')
     activeEventListenerToken = listenerToken
     const unsubscribeEvents = sdk.onEvenHubEvent((event) => {
@@ -87,7 +84,7 @@ export class EvenHubGlassesBridge implements GlassesBridge {
       
       const input = mapEvenHubEvent(event as Parameters<typeof mapEvenHubEvent>[0])
       
-      if (input) setTimeout(() => dispatchInput(input), 0)
+      if (input) dispatchInput(input)
     })
     return new EvenHubGlassesBridge(
       sdk,

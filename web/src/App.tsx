@@ -1,13 +1,14 @@
-import { useEffect, useState, useRef, type ClipboardEvent } from 'react'
+import { useCallback, useEffect, useState, useRef, type ClipboardEvent } from 'react'
 import { getApiConfig, setApiConfig, getApi, getAgentConfigs, saveAgentConfigs } from './api'
 import type { AgentProviderConfig, AuthConfig } from './api'
 import { AgentHomeController } from './controller/agentHomeController'
-import { EvenHubGlassesBridge } from './bridge/evenBridge'
+import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import QRScanner from './QRScanner'
 import './style.css'
 
 function formatModelName(m: string): string {
+  if (m === '') return 'Default'
   if (m === 'claude-3-5-sonnet-20241022') return 'Sonnet 3.5 (New)'
   if (m === 'claude-3-5-sonnet-20240620') return 'Sonnet 3.5'
   if (m === 'claude-3-opus-20240229') return 'Opus 3'
@@ -91,6 +92,7 @@ export default function App() {
   const handleSaveConfig = () => {
     setApiConfig(config)
     saveAgentConfigs(agentConfigs)
+    setAgentRefreshNonce(value => value + 1)
     if (controller) controller.boot()
   }
 
@@ -123,6 +125,7 @@ export default function App() {
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, string[]>>({})
   const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentProviderConfig>>(getAgentConfigs())
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
+  const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
 
   // Copy a command string to the clipboard and flash a "Copied!" indicator on
   // the source button for ~1.2s. Falls back to a hidden textarea + execCommand
@@ -151,9 +154,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!controller) return
-    let cancelled = false
+  const refreshAgentsAndModels = useCallback((isCancelled: () => boolean) => {
     const api = getApi()
     const refreshModelLists = async (agentStatuses: AgentStatus[], attempt = 0) => {
       const modelsMap: Record<string, string[]> = {}
@@ -166,9 +167,11 @@ export default function App() {
           const result = await api.getModelsDetailed(agent.id)
           modelsMap[agent.id] = result.models
           if (!newConfigs[agent.id]) {
-            newConfigs[agent.id] = { enabled: true, model: result.models[0] || 'default' }
+            newConfigs[agent.id] = { enabled: true, model: agent.id === 'claude' ? '' : (result.models[0] || 'default') }
+          } else if (agent.id === 'claude' && result.source !== 'refreshed') {
+            newConfigs[agent.id] = { ...newConfigs[agent.id], model: '' }
           } else if ((!newConfigs[agent.id].model || newConfigs[agent.id].model === 'default') && result.models[0]) {
-            newConfigs[agent.id] = { ...newConfigs[agent.id], model: result.models[0] }
+            newConfigs[agent.id] = { ...newConfigs[agent.id], model: agent.id === 'claude' ? '' : result.models[0] }
           }
           if ((result.status === 'refreshing' || result.models.length === 0) && result.available !== false) {
             pending.push(agent.id)
@@ -178,20 +181,21 @@ export default function App() {
         }
       }))
 
-      if (cancelled) return
+      if (isCancelled()) return
       setModelsByAgent(prev => ({ ...prev, ...modelsMap }))
       setAgentConfigs(newConfigs)
+      saveAgentConfigs(newConfigs)
 
       if (pending.length > 0 && attempt < 5) {
         window.setTimeout(() => {
-          if (!cancelled) refreshModelLists(agentStatuses.filter(agent => pending.includes(agent.id)), attempt + 1)
+          if (!isCancelled()) refreshModelLists(agentStatuses.filter(agent => pending.includes(agent.id)), attempt + 1)
         }, 2000)
       }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     api.getAgents().then(async (data: any[]) => {
-      if (cancelled) return
+      if (isCancelled()) return
       const agentStatuses: AgentStatus[] = data.map(d => typeof d === 'string' ? { id: d, available: true } : d);
       const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes', 'claudely'];
       agentStatuses.sort((a, b) => {
@@ -205,12 +209,18 @@ export default function App() {
       setAgents(agentStatuses)
       await refreshModelLists(agentStatuses)
     }).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    refreshAgentsAndModels(() => cancelled)
     return () => { cancelled = true }
-  }, [controller])
+  }, [agentRefreshNonce, refreshAgentsAndModels])
 
   const toggleAgent = (agent: string) => {
     setAgentConfigs(prev => {
-      const next = { ...prev, [agent]: { ...prev[agent], enabled: !prev[agent].enabled } }
+      const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
+      const next = { ...prev, [agent]: { ...current, enabled: !current.enabled } }
       saveAgentConfigs(next)
       return next
     })
@@ -218,7 +228,8 @@ export default function App() {
 
   const changeAgentModel = (agent: string, model: string) => {
     setAgentConfigs(prev => {
-      const next = { ...prev, [agent]: { ...prev[agent], model } }
+      const current = prev[agent] ?? { enabled: true, model }
+      const next = { ...prev, [agent]: { ...current, model } }
       saveAgentConfigs(next)
       return next
     })
@@ -226,7 +237,8 @@ export default function App() {
 
   const changeAgentThinking = (agent: string, thinking: string) => {
     setAgentConfigs(prev => {
-      const next = { ...prev, [agent]: { ...prev[agent], thinking } }
+      const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
+      const next = { ...prev, [agent]: { ...current, thinking } }
       saveAgentConfigs(next)
       return next
     })
@@ -550,10 +562,12 @@ export default function App() {
                     <button
                       type="button"
                       className="btn"
+                      aria-label="Copy install command"
+                      title="Copy install command"
                       onClick={() => copyToClipboard('npm install -g even-agent-home', 'install')}
-                      style={{ flexShrink: 0, width: 'auto', minWidth: '72px' }}
+                      style={{ flexShrink: 0, width: '38px', minWidth: '38px', padding: 0, fontSize: '16px' }}
                     >
-                      {copiedCommand === 'install' ? 'Copied!' : 'Copy'}
+                      {copiedCommand === 'install' ? '✓' : '📋'}
                     </button>
                   </div>
                 </div>
@@ -580,10 +594,12 @@ export default function App() {
                     <button
                       type="button"
                       className="btn"
+                      aria-label="Copy start command"
+                      title="Copy start command"
                       onClick={() => copyToClipboard('even-agent-home --token my-secret --port 8765', 'start')}
-                      style={{ flexShrink: 0, width: 'auto', minWidth: '72px' }}
+                      style={{ flexShrink: 0, width: '38px', minWidth: '38px', padding: 0, fontSize: '16px' }}
                     >
-                      {copiedCommand === 'start' ? 'Copied!' : 'Copy'}
+                      {copiedCommand === 'start' ? '✓' : '📋'}
                     </button>
                   </div>
                 </div>
@@ -626,6 +642,7 @@ export default function App() {
                             disabled={!agent.available || !(agentConfigs[agent.id]?.enabled ?? true)}
                             style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-light)', color: 'var(--text-main)', background: 'rgba(15, 23, 42, 0.8)' }}
                           >
+                            {agent.id === 'claude' && <option value="">Default</option>}
                             {(modelsByAgent[agent.id] || []).map(m => <option key={m} value={m}>{formatModelName(m)}</option>)}
                           </select>
                         </div>
@@ -696,6 +713,10 @@ export default function App() {
               </div>
               <button className="btn primary-btn" onClick={handleSaveConfig} style={{ width: '100%', fontSize: '1.1rem', padding: '12px' }}>Save Settings</button>
             </section>
+
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '8px 0 2px' }}>
+              Agent Home v{APP_BUILD_VERSION}
+            </div>
           </div>
         )}
       </main>

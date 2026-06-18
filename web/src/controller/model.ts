@@ -31,8 +31,8 @@ export type AppState =
   | { screen: 'sidebar.sessions'; agent: string; sessions: any[]; selectedSessionIndex: number }
   | { screen: 'sidebar.messages'; agent: string; sessionId: string; messages: any[]; scrollOffset: number; newerPages?: any[][]; isNewestPage?: boolean; isThinking?: boolean; agentError?: string }
   | { screen: 'sidebarRecording'; agent: string; sessionId: string; messages: any[]; chunks: Uint8Array[]; startedAt: number; scrollOffset: number; isThinking?: boolean }
-  | { screen: 'sidebarTranscribing'; agent: string; sessionId: string; messages: any[]; scrollOffset: number; isThinking?: boolean }
-  | { screen: 'sidebarConfirm'; agent: string; sessionId: string; messages: any[]; transcript: string; selectedIndex: number; scrollOffset: number; isThinking?: boolean }
+  | { screen: 'sidebarTranscribing'; agent: string; sessionId: string; messages: any[]; chunks: Uint8Array[]; scrollOffset: number; isThinking?: boolean }
+  | { screen: 'sidebarConfirm'; agent: string; sessionId: string; messages: any[]; transcript: string; selectedIndex: number; scrollOffset: number; isThinking?: boolean; transcriptError?: string }
   | { screen: 'sidebarSending'; agent: string; sessionId: string; messages: any[]; transcript: string; scrollOffset: number; isThinking?: boolean }
   | { screen: 'notification'; agent: string; sessionId: string; messageText: string; previous: AppState }
   | { screen: 'asleep'; previous: AppState }
@@ -156,7 +156,7 @@ export function getScreenModel(state: AppState): ScreenModel {
     case 'sidebarRecording':
       return {
         kind: 'sidebar', focus: 'panel', title: state.agent, sidebarTitle: '', sidebarItems: [], sidebarSelected: 0,
-        panelTitle: '', panelBody: 'Recording... speak now.\n\n(Previous msgs hidden for clarity)',
+        panelTitle: '', panelBody: 'Recording... speak now.',
         panelFooter: 'Click stop | Double click cancel', fullWidth: true
       }
     case 'sidebarTranscribing':
@@ -168,8 +168,11 @@ export function getScreenModel(state: AppState): ScreenModel {
     case 'sidebarConfirm':
       return {
         kind: 'sidebar', focus: 'panel', title: 'Confirm Send', sidebarTitle: '', sidebarItems: [], sidebarSelected: 0,
-        panelTitle: '', panelBody: `You said:\n${state.transcript}\n\n${state.selectedIndex === 0 ? '> Send' : '  Send'}\n${state.selectedIndex === 1 ? '> Cancel' : '  Cancel'}`,
-        panelFooter: 'Swipe select | Press confirm', fullWidth: true
+        panelTitle: '',
+        panelBody: state.transcriptError
+          ? `Voice failed:\n${state.transcriptError}\n\n> Cancel`
+          : `You said:\n${state.transcript}\n\n${state.selectedIndex === 0 ? '> Send' : '  Send'}\n${state.selectedIndex === 1 ? '> Cancel' : '  Cancel'}`,
+        panelFooter: state.transcriptError ? 'Press confirm' : 'Swipe select | Press confirm', fullWidth: true
       }
     case 'sidebarSending':
       return {

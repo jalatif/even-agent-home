@@ -38,6 +38,10 @@ function getManualScrollStep(speed: 'slow' | 'medium' | 'fast' | undefined): num
   return 2
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export interface GlassesBridge {
   render(model: ScreenModel): Promise<void>
   renderSidebarPanel?(model: Extract<ScreenModel, { kind: 'sidebar' }>): Promise<void>
@@ -276,7 +280,7 @@ export class AgentHomeController {
         if (this.bridge?.turnScreenOff) this.bridge.turnScreenOff()
       } else if (this.state.screen === 'asleep') {
         this.setState(this.state.previous || { screen: 'loading', message: 'Waking...' })
-      } else if (this.state.screen === 'sidebarRecording' || this.state.screen === 'sidebarConfirm') {
+      } else if (this.state.screen === 'sidebarRecording' || this.state.screen === 'sidebarTranscribing' || this.state.screen === 'sidebarConfirm') {
         this.setState({ ...this.state, screen: 'sidebar.messages', isThinking: false }, { renderBridge: true, partialRender: true }) // Cancel recording
       }
       return
@@ -343,10 +347,19 @@ export class AgentHomeController {
         this.stopRecordingAndTranscribe()
       }
     }
+    else if (this.state.screen === 'sidebarTranscribing') {
+      if (input.type === 'audioChunk') {
+        this.state.chunks.push(input.pcm)
+      }
+    }
     else if (this.state.screen === 'sidebarConfirm') {
       if (input.type === 'swipeDown' || input.type === 'swipeUp') {
         this.setState({ ...this.state, selectedIndex: this.state.selectedIndex === 0 ? 1 : 0 })
       } else if (input.type === 'press') {
+        if (this.state.transcriptError) {
+          this.openSession(this.state.agent, this.state.sessionId)
+          return
+        }
         if (this.state.selectedIndex === 0) {
           this.sendMessage()
         } else {
@@ -462,47 +475,75 @@ export class AgentHomeController {
     if (this.state.screen !== 'sidebarRecording') return
     const recordingState = this.state
     const chunks = recordingState.chunks
-    if (this.bridge?.setAudioEnabled) this.bridge.setAudioEnabled(false)
     this.setState({ 
       screen: 'sidebarTranscribing',
       agent: recordingState.agent,
       sessionId: recordingState.sessionId,
       messages: recordingState.messages,
+      chunks,
       scrollOffset: recordingState.scrollOffset
     })
     
     // Transcribe
     try {
+      try {
+        if (this.bridge?.setAudioEnabled) await this.bridge.setAudioEnabled(false)
+      } catch (err) {
+        console.warn('[stopRecording] audio stop failed; trying transcription with buffered audio', err)
+      }
+      await sleep(75)
+      const currentState = this.getState()
+      const finalChunks: Uint8Array[] = currentState.screen === 'sidebarTranscribing'
+        ? currentState.chunks
+        : chunks
       let pcm: Uint8Array
-      if (chunks.length === 0) {
+      if (finalChunks.length === 0) {
         pcm = new Uint8Array(0)
       } else {
-        const totalLen = chunks.reduce((sum, c) => sum + c.byteLength, 0)
+        const totalLen = finalChunks.reduce((sum, c) => sum + c.byteLength, 0)
         pcm = new Uint8Array(totalLen)
         let offset = 0
-        for (const chunk of chunks) {
+        for (const chunk of finalChunks) {
           pcm.set(chunk, offset)
           offset += chunk.byteLength
         }
       }
       const transcript = await getApi().transcribeAudio(pcm)
+      const trimmedTranscript = transcript.trim()
+      if (!trimmedTranscript || /^\.+$/.test(trimmedTranscript)) {
+        throw new Error('No speech detected')
+      }
       this.setState({
         screen: 'sidebarConfirm',
         agent: recordingState.agent,
         sessionId: recordingState.sessionId,
         messages: recordingState.messages,
-        transcript,
+        transcript: trimmedTranscript,
         selectedIndex: 0,
         scrollOffset: recordingState.scrollOffset
       })
     } catch (e) {
+      const message = e instanceof Error ? e.message : 'Speech transcription failed'
       console.error('[stopRecording]', e)
-      this.openSession(recordingState.agent, recordingState.sessionId)
+      this.setState({
+        screen: 'sidebarConfirm',
+        agent: recordingState.agent,
+        sessionId: recordingState.sessionId,
+        messages: recordingState.messages,
+        transcript: '',
+        selectedIndex: 0,
+        scrollOffset: recordingState.scrollOffset,
+        transcriptError: message
+      })
     }
   }
 
   private async sendMessage() {
     if (this.state.screen !== 'sidebarConfirm') return
+    if (this.state.transcriptError) {
+      this.openSession(this.state.agent, this.state.sessionId)
+      return
+    }
     const text = this.state.transcript || ''
     const trimmed = text.trim();
     if (!trimmed || /^\.+$/.test(trimmed)) {

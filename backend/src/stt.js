@@ -34,7 +34,7 @@ export async function transcribeAudio(pcmData) {
 
         const { stdout } = await execFileAsync("whisper-ctranslate2", [
             wavPath,
-            "--model", "tiny.en",
+            "--model", "small.en",
             "--output_format", "txt",
             "--output_dir", tmpDir,
         ], { cwd: tmpDir, timeout: 120000 });

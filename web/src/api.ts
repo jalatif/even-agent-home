@@ -115,14 +115,18 @@ export class AgentHomeApi {
     options.headers = { ...options.headers, ...this.headers };
 
     const res = await fetch(url, options);
-    if (!res.ok) throw new Error(`Fetch failed: ${res.statusText}`);
-
-    const data = await res.json();
-    
-    // Decrypt incoming payload if present
+    let data = await res.json().catch(() => ({}));
+    // Decrypt incoming payload before status handling so encrypted error
+    // responses can still surface their real message on the glasses.
     if (data.encryptedPayload) {
       const decryptedData = await decryptPayload(data.encryptedPayload, this.config.token);
-      return JSON.parse(decryptedData);
+      data = JSON.parse(decryptedData);
+    }
+    if (!res.ok) {
+      const message = typeof data.error === 'string' && data.error.trim()
+        ? data.error
+        : `Fetch failed: ${res.statusText || res.status}`
+      throw new Error(message);
     }
     return data;
   }
