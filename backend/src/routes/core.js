@@ -72,12 +72,21 @@ const CLI_BINS = {
     "hermes": "hermes"
 };
 
+// Args passed to the agent binary to list its models. Defaults to ["models"].
+// `pi` is special-cased: `pi models` is a freeform prompt that the agent
+// answers with conversational LLM prose (unparseable), whereas `pi --list-models`
+// emits a deterministic whitespace-aligned table. `omp` (oh-my-pi) uses the
+// `models` subcommand with a box-drawn table.
+const MODEL_LIST_ARGS = {
+    "pi": ["--list-models"],
+};
+
 const DEFAULT_MODELS = {
     claude: ["claude-haiku-4-5","claude-opus-4-5","claude-opus-4-6","claude-opus-4-7","claude-opus-4-8","claude-sonnet-4-5","claude-sonnet-4-6"],
     codex: ["codex-mini-latest","gpt-4","gpt-4-turbo","gpt-4.1","gpt-4.1-mini","gpt-4.1-nano","gpt-4o","gpt-4o-2024-05-13","gpt-4o-2024-08-06","gpt-4o-2024-11-20","gpt-4o-mini","gpt-5","gpt-5-chat-latest","gpt-5-codex","gpt-5-mini","gpt-5-nano","gpt-5-pro","gpt-5.1","gpt-5.1-chat-latest","gpt-5.1-codex","gpt-5.1-codex-max","gpt-5.1-codex-mini","gpt-5.2","gpt-5.2-chat-latest","gpt-5.2-codex","gpt-5.2-pro","gpt-5.3-chat-latest","gpt-5.3-codex","gpt-5.3-codex-spark","gpt-5.4","gpt-5.4-mini","gpt-5.4-nano","gpt-5.4-pro","gpt-5.5","gpt-5.5-pro","o1","o1-pro","o3","o3-deep-research","o3-mini","o3-pro","o4-mini","o4-mini-deep-research"],
     "oh-my-pi": ["deepseek-claude-flash","deepseek-claude-pro","gemma4-mac","gemma4-ollama-pc","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max","deepseek-v4-flash","deepseek-v4-pro","minimax-m3"],
     antigravity: ["claude-haiku-4-5@20251001","claude-opus-4-5@20251101","claude-opus-4-6@default","claude-opus-4-7@default","claude-opus-4-8@default","claude-sonnet-4-5@20250929","claude-sonnet-4-6@default","deepseek-ai/deepseek-v3.1-maas","deepseek-ai/deepseek-v3.2-maas","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-3-flash-preview","gemini-3.1-flash-lite","gemini-3.1-flash-lite-preview","gemini-3.1-pro-preview","gemini-3.1-pro-preview-customtools","gemini-3.5-flash","gemini-flash-latest","gemini-flash-lite-latest","meta/llama-3.3-70b-instruct-maas","meta/llama-4-maverick-17b-128e-instruct-maas","moonshotai/kimi-k2-thinking-maas","openai/gpt-oss-120b-maas","openai/gpt-oss-20b-maas","qwen/qwen3-235b-a22b-instruct-2507-maas","zai-org/glm-4.7-maas","zai-org/glm-5-maas"],
-    pi: ["nemotron-3-super:cloud","qwen2.5:0.5b","gemma4:latest"],
+    pi: ["deepseek-claude-flash","deepseek-claude-pro","deepseek-v4-flash","deepseek-v4-pro","gemma4-mac","gemma4-ollama-pc","minimax-m3","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max"],
     opencode: ["deepseek-claude-flash","deepseek-claude-pro","gemma4-mac","gemma4-ollama-pc","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max","deepseek-v4-flash","deepseek-v4-pro","minimax-m3"],
     hermes: ["hermes-v2", "hermes-pro"]
 };
@@ -153,9 +162,29 @@ function parseLineModels(output) {
         .filter((line) => line && !/^error[:\s]/i.test(line) && !/^warning[:\s]/i.test(line)));
 }
 
+function parsePiModels(output) {
+    // `pi --list-models` emits:
+    //   LiteLLM: 16 models discovered (source: model_info).
+    //   provider  model                  context  max-out  thinking  images
+    //   litellm   deepseek-v4-flash      128K     16.4K    no        no
+    //   ...
+    // Take the 2nd whitespace-separated column (the model id) from each row,
+    // skipping the discovery banner and the column header.
+    const models = [];
+    for (const line of output.split("\n")) {
+        const s = line.trim();
+        if (!s) continue;
+        if (/^LiteLLM: \d+ models discovered/i.test(s)) continue;
+        if (s.startsWith("provider") && /model/i.test(s)) continue;
+        const parts = line.split(/\s+/);
+        if (parts.length >= 2) models.push(parts[1]);
+    }
+    return uniqueStrings(models);
+}
+
 function parseModels(provider, output) {
     if (provider === "oh-my-pi") return parseGroupedModelTable(output, provider);
-    if (provider === "pi") return parseGroupedModelTable(output, provider);
+    if (provider === "pi") return parsePiModels(output);
     return parseLineModels(output);
 }
 
@@ -189,7 +218,7 @@ async function refreshModels(provider, { force = false } = {}) {
     }
 
     cached.status = "refreshing";
-    cached.refreshPromise = execFileWithTimeout(bin, ["models"], 5000)
+    cached.refreshPromise = execFileWithTimeout(bin, MODEL_LIST_ARGS[provider] ?? ["models"], 5000)
         .then((output) => {
             const models = parseModels(provider, output);
             if (models.length > 0) {
