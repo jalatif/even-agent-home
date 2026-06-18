@@ -35,7 +35,11 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Start backend ───────────────────────────────────────────
 console.log("Starting backend...");
-const proc = spawn("node", ["src/index.js"], {
+// Spawn the CLI entry (not `src/index.js`, which is library-only — it only
+// exports startServer and never calls it, so spawning it directly is a silent
+// no-op). The CLI wires up token/port/host and invokes startServer. TEST_MODE=1
+// bypasses auth so the harness can call /api without bearer headers.
+const proc = spawn("node", ["bin/even-agent-home.js", "--token", "harness-test-token", "--host", "127.0.0.1", "--port", String(PORT)], {
     cwd: "backend",
     env: { ...process.env, TEST_MODE: "1", PORT: String(PORT) },
     stdio: "ignore",

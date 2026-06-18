@@ -21,20 +21,36 @@ function postJson(p, b) { return fetch(`${URL}${p}`, { method: "POST", headers: 
 function getJson(p) { return fetch(`${URL}${p}`).then(r => r.json()); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Providers to test (skip hermes — chat API, no persisted sessions)
+// Providers to exercise. Each entry runs the 4 contract invariants against a
+// REAL backend instance. The CLI-backed providers (codex, opencode,
+// antigravity) are the historically buggiest (session-ID resolution, --resume,
+// alias mismatch) and were previously skipped here with a stale "CLI not
+// available" comment — they ARE available in dev, so they run now.
+//
+// hermes is intentionally excluded: it is a streaming chat gateway with no
+// persisted session store, so contract 4 (resume a listed session) does not
+// apply.
+//
+// Contract 3 (idle ⟹ history has content) is env-dependent (needs valid model
+// credentials), so a `⚠` there is tolerated rather than failing the suite.
 const PROVIDERS = [
     { id: "oh-my-pi", model: "deepseek-v4-flash", thinking: "medium", yolo: true },
     { id: "pi", model: "deepseek-v4-flash", thinking: "medium", yolo: true },
     { id: "claude", model: "claude-sonnet-4-5", thinking: "off", yolo: true },
-    // opencode/codex/claudely/antigravity need their CLI/app-server available
-    // Skip for now; add when available
+    { id: "codex", model: "gpt-5", thinking: "off", yolo: true },
+    { id: "opencode", model: "opencode/deepseek-v4-flash-free", thinking: "off", yolo: true },
+    { id: "antigravity", model: "gemini-2.5-flash", thinking: "off", yolo: true },
 ];
 
 let passed = 0, failed = 0;
 
 // ── Start backend ───────────────────────────────────────────
 console.log("Starting backend...");
-const proc = spawn("node", ["src/index.js"], {
+// Spawn the CLI entry (not `src/index.js`, which is library-only — it only
+// exports startServer and never calls it, so spawning it directly is a silent
+// no-op). The CLI wires up token/port/host and invokes startServer. TEST_MODE=1
+// bypasses auth so the harness can call /api without bearer headers.
+const proc = spawn("node", ["bin/even-agent-home.js", "--token", "harness-test-token", "--host", "127.0.0.1", "--port", String(PORT)], {
     cwd: "backend",
     env: { ...process.env, TEST_MODE: "1", PORT: String(PORT) },
     stdio: "ignore",
