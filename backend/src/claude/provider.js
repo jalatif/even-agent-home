@@ -135,6 +135,15 @@ export function createClaudeProvider(emit) {
     function interrupt(sessionId) {
         sessions.get(sessionId)?.interrupt();
     }
+    // Tear down every Claude SDK session on backend shutdown: interrupt the
+    // in-flight query, clear timers/permission queues, and drop the SDK query
+    // handle so the underlying subprocess can exit. ClaudeSession.close() is
+    // idempotent.
+    function dispose() {
+        for (const session of sessions.values()) {
+            try { session.close(); } catch {}
+        }
+    }
     function getStatus(sessionId) {
         const session = sessions.get(sessionId);
         if (!session)
@@ -243,5 +252,6 @@ export function createClaudeProvider(emit) {
         respondQuestion,
         interrupt,
         getStatus,
+        dispose,
     };
 }

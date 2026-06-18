@@ -84,7 +84,7 @@ export function createCodexProvider(emit, getClient) {
         idleSince.delete(threadId);
     }
     // Sweep: unsubscribe server-originated sessions idle >3min with no SSE clients
-    setInterval(() => {
+    const sweepTimer = setInterval(() => {
         const now = Date.now();
         for (const [threadId, since] of idleSince) {
             if (now - since < IDLE_TTL_MS)
@@ -98,6 +98,7 @@ export function createCodexProvider(emit, getClient) {
             unsubscribe(threadId);
         }
     }, 60_000);
+    sweepTimer.unref();
     // ── Prompt queue ───────────────────────────────────────
     function dispatchNext(sessionId) {
         const queue = promptQueues.get(sessionId);
@@ -381,6 +382,27 @@ export function createCodexProvider(emit, getClient) {
         }
         return result;
     }
+    // Tear down everything this provider owns on backend shutdown: stop the
+    // idle sweep, clear any pending subscribe-retry timers, unsubscribe every
+    // tracked thread from the codex app-server, and interrupt busy sessions.
+    // The shared codex app-server WS client is owned by core.js/index.js
+    // (stopCodexAppServer), so we do NOT close it here.
+    function dispose() {
+        clearInterval(sweepTimer);
+        for (const timer of pendingRetryTimers.values()) clearTimeout(timer);
+        pendingRetryTimers.clear();
+        for (const threadId of [...subscribed, ...pending]) {
+            try { client.threadUnsubscribe(threadId).catch(() => {}); } catch {}
+        }
+        for (const session of sessions.values()) {
+            try { session.interrupt(); } catch {}
+        }
+        subscribed.clear();
+        pending.clear();
+        subscribing.clear();
+        pendingRetryCounts.clear();
+        idleSince.clear();
+    }
     return {
         listSessions,
         getSessionStatus,
@@ -392,5 +414,6 @@ export function createCodexProvider(emit, getClient) {
         interrupt,
         getStatus,
         getSubscribedSessions,
+        dispose,
     };
 }

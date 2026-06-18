@@ -9,6 +9,7 @@ export function createHermesProvider(emit, enableSessionRefresh = false) {
     const sessions = new Map();
     const phoneToGateway = new Map();
     let gatewaySessionCache = null;
+    let refreshTimer = null;
 
     function getSession(sessionId) {
         if (sessions.has(sessionId)) return sessions.get(sessionId);
@@ -224,7 +225,8 @@ export function createHermesProvider(emit, enableSessionRefresh = false) {
             });
         }
         refreshGatewaySessionCache();
-        setInterval(refreshGatewaySessionCache, 15000);
+        refreshTimer = setInterval(refreshGatewaySessionCache, 15000);
+        refreshTimer.unref();
     }
     function listSessions(limit) {
         const result = [];
@@ -276,8 +278,22 @@ export function createHermesProvider(emit, enableSessionRefresh = false) {
         }
     }
 
+    // Tear down on backend shutdown: stop the gateway session-list refresh
+    // loop and abort any in-flight chat-completion streams. The HTTP fetches
+    // are aborted via their AbortController; short-lived `hermes sessions list`
+    // spawn processes self-exit and need no explicit kill.
+    function dispose() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        refreshTimer = null;
+        for (const s of sessions.values()) {
+            try { s.abortController?.abort(); } catch {}
+            s.busy = false;
+            s.abortController = null;
+        }
+    }
+
     return {
         listSessions, getSessionStatus, getInfo, getHistory,
-        prompt, respondPermission, respondQuestion, interrupt, getStatus,
+        prompt, respondPermission, respondQuestion, interrupt, getStatus, dispose,
     };
 }
