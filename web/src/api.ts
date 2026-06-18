@@ -1,6 +1,13 @@
 import { storageGet, storageSet } from './storage.ts'
 
-export const defaultApiBaseUrl = 'http://localhost:3456'
+// Empty by default: the settings input shows its placeholder hint
+// (http://<BACKEND_SERVER>:<PORT>) and the app shows its "please configure"
+// empty state until the user enters a URL or scans a QR code. Previously this
+// auto-filled from the current page origin (sameOriginBaseUrl), but that
+// guessed wrong in dev (localhost:<vite-port>/api, which isn't a backend) and
+// was confusing for the common multi-host case (glasses on LAN → separate
+// bridge). Users always connect via QR/URL anyway, so the hint is clearer.
+export const defaultApiBaseUrl = ''
 
 export interface AuthConfig {
   baseUrl: string
@@ -57,16 +64,6 @@ function configFromLocation(): { token?: string; explicitBaseUrl?: string } {
   }
 }
 
-// When nothing is saved, the WebView's same-origin URL is a reasonable
-// default for the backend (the bridge typically serves both on the same
-// host). The Vite dev server is a special case where the WebView is on
-// 5173 and the backend lives on the default port.
-function sameOriginBaseUrl(): string {
-  if (typeof window === 'undefined') return defaultApiBaseUrl
-  if (window.location.port === '5173') return defaultApiBaseUrl
-  return `${window.location.protocol}//${window.location.host}/api`
-}
-
 
 function migrateLegacyConfig(parsed: Partial<AuthConfig>): Partial<AuthConfig> {
   const out: Partial<AuthConfig> = { ...parsed }
@@ -99,20 +96,15 @@ export async function hydrateApiConfig(): Promise<AuthConfig> {
     console.warn('[api] failed to read apiConfig from storage', e)
   }
   // Layering rules (lowest → highest priority):
-  //   1. Hard defaults (currentConfig's initial values).
-  //   2. The same-origin URL — a "best guess when nothing is saved"
-  //      fill-in for the dev/prod case where the WebView and the
-  //      backend share a host. Only applies when the default URL is
-  //      still in place; once a real host is saved this no longer fires.
-  //   3. Persisted fields (token, baseUrl, yolo, debug, scroll prefs).
-  //      Saved fields ALWAYS win over the same-origin default.
-  //   4. URL params. `?token=` alone refreshes the token without
-  //      rewriting baseUrl. `?baseUrl=` (explicit) overrides saved.
+  //   1. Hard defaults (currentConfig's initial values) — baseUrl is '' so
+  //      the settings placeholder hint shows until the user configures it.
+  //   2. Persisted fields (token, baseUrl, yolo, debug, scroll prefs).
+  //      Saved fields ALWAYS win over the empty default.
+  //   3. URL params. `?token=` alone refreshes the token without rewriting
+  //      baseUrl. `?baseUrl=` (explicit) overrides saved.
   const { token, explicitBaseUrl } = configFromLocation()
-  const baseFromDefault = currentConfig.baseUrl === defaultApiBaseUrl
   currentConfig = {
     ...currentConfig,
-    ...(baseFromDefault ? { baseUrl: sameOriginBaseUrl() } : {}),
     ...saved,
     ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
     ...(token ? { token } : {}),

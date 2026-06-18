@@ -56,9 +56,8 @@ function makeStorage(): WindowStorage {
 }
 
 // Per-test window with a fresh in-memory `localStorage` shim and a
-// benign default `location`. `configFromLocation` reads
-// `protocol`/`host`/`port`, so a non-dev port is used to keep the
-// same-origin fallback deterministic.
+// benign default `location`. `configFromLocation` reads `search` for
+// deep-link params; port 80 keeps it a plain non-dev origin.
 function installWindow(): WindowStorage {
   const w: MutableWindow = {
     localStorage: makeStorage(),
@@ -142,7 +141,7 @@ test('hydrateApiConfig layers URL params on top of saved fields', async () => {
   assert.equal(cfg.scrollSpeed, 'fast', 'saved scrollSpeed preserved')
 })
 
-test('hydrateApiConfig returns same-origin fallback when nothing is persisted', async () => {
+test('hydrateApiConfig returns empty baseUrl when nothing is persisted', async () => {
   __resetApiStateForTests()
   installWindow()
   clearBridge()
@@ -150,9 +149,12 @@ test('hydrateApiConfig returns same-origin fallback when nothing is persisted', 
   win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
 
   const cfg = await hydrateApiConfig()
-  // No saved baseUrl → falls back to the same-origin URL so the backend
-  // served from the same place works out of the box.
-  assert.equal(cfg.baseUrl, 'http://localhost/api')
+  // No saved baseUrl and no ?baseUrl= deep link → baseUrl stays '' so the
+  // settings input shows its placeholder hint (http://<BACKEND_SERVER>:<PORT>)
+  // and the app shows its "please configure" empty state. Previously this
+  // auto-filled from the page origin, but that guessed wrong in dev and was
+  // confusing for the common glasses-on-LAN → separate-bridge case.
+  assert.equal(cfg.baseUrl, '')
   assert.equal(cfg.token, '')
   assert.equal(cfg.autoScrollLastExchange, true)
   assert.equal(cfg.scrollSpeed, 'medium')

@@ -187,11 +187,10 @@
 - **Issue:** `createClaudelyProvider` was implemented and referenced in `test-yolo-mode.mjs` + `UI_INVARIANTS.json`, but was never registered in `providerFactories` in `backend/src/routes/core.js` (`/api/prompt` returned 400 for it). Its `interrupt()` was also unsafe (never killed `proc`) and it had no `dispose()`.
 - **Resolution:** Claudely was removed entirely (deep review, 2026-06-18). It was a half-finished provider in limbo — implemented but unreachable, with an unsafe interrupt and no lifecycle cleanup. Removed: `backend/src/claudely/provider.js`, the `"claudely"` entry in `session.js` `SUPPORTED_PROVIDERS`, the `claudely` references in `web/src/App.tsx` (`PREFERRED_ORDER` + `formatModelName`), the 3 claudely steps in `docs/UI_INVARIANTS.json`, the 3 `*_claudely.glasses.json` simulator goldens, and the claudely sub-test in `scripts/test-yolo-mode.mjs`. It can be re-added later by following the standard provider pattern (register in `providerFactories`, store `proc` on session, SIGTERM+2s SIGKILL interrupt, `dispose()`).
 
-### 11.2 configFromLocation Vite Port Check [Dev-Only]
-- **Severity:** Low.
-- **Issue:** `web/src/api.ts:21` checks `window.location.port === '5173'` to pick the dev backend URL, but Vite is configured for `port: 5175`. The check never matches, so the dev token URL falls through to `sameOriginBaseUrl = http://localhost:5175/api` which doesn't exist. End result: opening the dev URL with `?token=` points at a non-existent endpoint.
-- **Files:** `web/src/api.ts`, `web/vite.config.ts`.
-- **Follow-Up:** Import the Vite port constant via `import.meta.env` or hard-code to match `vite.config.ts`.
+### 11.2 configFromLocation Vite Port Check [Resolved]
+- **Severity:** Was Low.
+- **Issue:** `web/src/api.ts` checked `window.location.port === '5173'` to pick the dev backend URL, but Vite is configured for `port: 5175`. The check never matched, so the dev token URL fell through to `sameOriginBaseUrl = http://localhost:5175/api` which doesn't exist.
+- **Resolution:** The whole `sameOriginBaseUrl` auto-fill was removed (deep review, 2026-06-18). `baseUrl` now defaults to `''` so the settings input shows its placeholder hint and the app shows its "please configure" empty state until the user scans a QR / enters a URL. The stale `5173` check is gone with it. Users connect via QR/Connect-URL anyway, so the hint is clearer than a wrong guess; deep-link `?baseUrl=` and saved configs still win over the empty default.
 
 ### 11.3 Fuzzy Test Vite Strict Port [Flakiness]
 - **Severity:** Low.
