@@ -38,6 +38,27 @@ function formatModelName(m: string): string {
 }
 
 /**
+ * The model to pre-select for a freshly-configured agent (or when the saved
+ * model is empty/'default'). Pinned per-agent because relying on list order
+ * (`models[0]`) is fragile — the backend returns models in a fixed but
+ * non-version-sorted order (e.g. claude starts with haiku, codex with
+ * codex-mini-latest), so `models[0]` is rarely the flagship users want.
+ *
+ * The preferred model is only used if it actually appears in the available
+ * model list, so an install that lacks it falls back gracefully.
+ */
+const PREFERRED_DEFAULT_MODEL: Record<string, string> = {
+  claude: 'claude-opus-4-8',
+  codex: 'gpt-5.5',
+}
+
+function defaultModelFor(agent: string, models: string[]): string {
+  const preferred = PREFERRED_DEFAULT_MODEL[agent]
+  if (preferred && models.includes(preferred)) return preferred
+  return models[0] || 'default'
+}
+
+/**
  * Parse a backend connection URL of the form
  *   http://<host>:<port>?token=<token>[&name=<name>]
  * (the form printed by the backend banner and embedded in the QR code) and
@@ -228,11 +249,19 @@ export default function App() {
           const result = await api.getModelsDetailed(agent.id)
           modelsMap[agent.id] = result.models
           if (!newConfigs[agent.id]) {
-            newConfigs[agent.id] = { enabled: true, model: agent.id === 'claude' ? '' : (result.models[0] || 'default') }
+            // Fresh config: pre-select the preferred default for the agent
+            // (e.g. claude-opus-4-8, gpt-5.5) when available, else models[0].
+            newConfigs[agent.id] = { enabled: true, model: defaultModelFor(agent.id, result.models) }
           } else if (agent.id === 'claude' && result.source !== 'refreshed') {
-            newConfigs[agent.id] = { ...newConfigs[agent.id], model: '' }
-          } else if ((!newConfigs[agent.id].model || newConfigs[agent.id].model === 'default') && result.models[0]) {
-            newConfigs[agent.id] = { ...newConfigs[agent.id], model: agent.id === 'claude' ? '' : result.models[0] }
+            // Models not loaded yet — leave the saved selection untouched so we
+            // don't clobber a user preference with a stale guess.
+          } else if (!newConfigs[agent.id].model || newConfigs[agent.id].model === 'default') {
+            // No explicit user choice — pre-select the preferred default.
+            // (An explicitly saved model is never overwritten.)
+            const picked = defaultModelFor(agent.id, result.models)
+            if (picked !== 'default') {
+              newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
+            }
           }
           if ((result.status === 'refreshing' || result.models.length === 0) && result.available !== false) {
             pending.push(agent.id)
