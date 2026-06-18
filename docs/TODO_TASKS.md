@@ -182,11 +182,10 @@
 - **Source:** Deep code review of entire codebase + 12 test harnesses on 2026-06-17.
 - **Resolution summary:** Fixed antigravity interrupt timer leak, added SIGKILL escalation to opencode interrupt/dispose, cleaned up 7 lint regressions in App.tsx + controller with proper type narrowing, removed backend/.env. Full verification: `npm run lint` 0/0, `npm run build` 0 errors, `npm run test:simulator` 100/100, all 12 test scripts pass.
 
-### 11.1 Claudely Provider Wiring [Deferred — Future Provider]
-- **Severity:** Medium (latent).
-- **Issue:** `createClaudelyProvider` is implemented and used in `test-yolo-mode.mjs` + UI_INVARIANTS.json, but is not registered in `providerFactories` in `backend/src/routes/core.js`. When wired, `claudely.prompt()` does not store `proc` on the session, so `interrupt()` is a no-op, and there is no `dispose()` method.
-- **Files:** `backend/src/routes/core.js`, `backend/src/claudely/provider.js`, `web/src/App.tsx` (PREFERRED_ORDER), `docs/UI_INVARIANTS.json`, `scripts/test-yolo-mode.mjs`.
-- **Follow-Up:** When claudely is shipped: (1) add to `providerFactories`, (2) store `proc` on session in `prompt()`, (3) fix `interrupt()` to use SIGTERM + 2s SIGKILL escalation + `proc.once("close", clearTimeout)` like oh-my-pi/pi/antigravity/opencode, (4) add `dispose()` to clean up claudely children on backend shutdown.
+### 11.1 Claudely Provider Wiring [Resolved — Removed]
+- **Severity:** Was Medium (latent).
+- **Issue:** `createClaudelyProvider` was implemented and referenced in `test-yolo-mode.mjs` + `UI_INVARIANTS.json`, but was never registered in `providerFactories` in `backend/src/routes/core.js` (`/api/prompt` returned 400 for it). Its `interrupt()` was also unsafe (never killed `proc`) and it had no `dispose()`.
+- **Resolution:** Claudely was removed entirely (deep review, 2026-06-18). It was a half-finished provider in limbo — implemented but unreachable, with an unsafe interrupt and no lifecycle cleanup. Removed: `backend/src/claudely/provider.js`, the `"claudely"` entry in `session.js` `SUPPORTED_PROVIDERS`, the `claudely` references in `web/src/App.tsx` (`PREFERRED_ORDER` + `formatModelName`), the 3 claudely steps in `docs/UI_INVARIANTS.json`, the 3 `*_claudely.glasses.json` simulator goldens, and the claudely sub-test in `scripts/test-yolo-mode.mjs`. It can be re-added later by following the standard provider pattern (register in `providerFactories`, store `proc` on session, SIGTERM+2s SIGKILL interrupt, `dispose()`).
 
 ### 11.2 configFromLocation Vite Port Check [Dev-Only]
 - **Severity:** Low.
@@ -212,8 +211,7 @@
 - **Files:** `backend/src/startup/common.js`.
 - **Follow-Up:** Capture the timer handle and `clearTimeout` it in the `done()` body.
 
-### 11.6 dotenv Package Removal [Cleanup]
-- **Severity:** Low.
-- **Issue:** With `backend/.env` removed (2026-06-17), the `dotenv` dependency + `import "dotenv/config"` in `backend/bin/cli.js:3` is dead code. Token is now passed via CLI `--token` flag.
-- **Files:** `backend/package.json`, `backend/package-lock.json`, `backend/bin/cli.js`.
-- **Follow-Up:** Remove `import "dotenv/config"` from cli.js, drop `dotenv` from `package.json` dependencies, run `npm install --prefix backend` to update lockfile.
+### 11.6 dotenv Package Removal [Resolved]
+- **Severity:** Was Low.
+- **Issue:** With `backend/.env` removed (2026-06-17), the `dotenv` dependency + `import "dotenv/config"` in `backend/bin/even-agent-home.js` was dead code, and `backend/README.md` advertised `.env` support that was no longer the intended path. Token is passed via CLI `--token` flag.
+- **Resolution:** Removed `import "dotenv/config"` from `bin/even-agent-home.js`, dropped `dotenv` from `package.json` dependencies, regenerated `package-lock.json` (pruned from node_modules), and updated `backend/README.md:42` to drop the `.env` claim — non-token settings are now documented as real process-env / CLI-flag only. Verified: CLI boots, `PORT`/`HOST` still work as real env vars (e.g. `PORT=3599 even-agent-home`), `/api/agents` returns 200.

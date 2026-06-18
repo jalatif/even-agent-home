@@ -39,7 +39,7 @@ AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connec
   - Action: Sending submits the text to the backend; streaming response updates the session view in real-time.
 
 ## Backend Requirements
-- **Single Service**: Must handle all providers (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes, claudely) simultaneously.
+- **Single Service**: Must handle all providers (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes) simultaneously.
 - **API Endpoints**:
   - `GET /api/agents`: Returns list of available agents and their models.
   - `GET /api/sessions?agent={agent}`: Returns non-empty sessions.

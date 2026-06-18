@@ -9,8 +9,8 @@ import { debugLog } from "../debug.js";
 /**
  * pi (omp) provider.
  *
- * Spawns `omp -p --mode json` as a subprocess per prompt (same pattern as
- * local-claudely).  omp streams JSON events on stdout in real time:
+ * Spawns `omp -p --mode json` as a subprocess per prompt.  omp streams
+ * JSON events on stdout in real time:
  *   {type:"session", id, timestamp, cwd, title}
  *   {type:"agent_start"} / {type:"agent_end"}
  *   {type:"turn_start"}  / {type:"turn_end"}

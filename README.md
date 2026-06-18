@@ -52,8 +52,8 @@ format).
 ├── app.json              Even Hub app manifest (package id, permissions, network whitelist)
 ├── backend/              Bridge server — published to npm as `even-agent-home`
 │   ├── bin/              CLI entry point
-│   ├── src/              Server (Express + WebSocket)
-│   ├── providers/        AI agent provider implementations
+│   ├── src/              Server (Express + WebSocket) and provider implementations
+│   │   └── <provider>/   One folder per agent (claude/, codex/, opencode/, …)
 │   ├── README.md         Backend-specific docs
 │   ├── LICENSE           MIT license for the npm package
 │   └── package.json
@@ -103,7 +103,6 @@ agents continue to work.
 | `hermes` | bundled |
 | `antigravity` | `gemini` |
 | `oh-my-pi` | bundled |
-| `claudely` | bundled |
 | `pi` | bundled |
 
 ## Development
