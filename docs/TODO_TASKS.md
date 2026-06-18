@@ -214,3 +214,29 @@
 - **Severity:** Was Low.
 - **Issue:** With `backend/.env` removed (2026-06-17), the `dotenv` dependency + `import "dotenv/config"` in `backend/bin/even-agent-home.js` was dead code, and `backend/README.md` advertised `.env` support that was no longer the intended path. Token is passed via CLI `--token` flag.
 - **Resolution:** Removed `import "dotenv/config"` from `bin/even-agent-home.js`, dropped `dotenv` from `package.json` dependencies, regenerated `package-lock.json` (pruned from node_modules), and updated `backend/README.md:42` to drop the `.env` claim — non-token settings are now documented as real process-env / CLI-flag only. Verified: CLI boots, `PORT`/`HOST` still work as real env vars (e.g. `PORT=3599 even-agent-home`), `/api/agents` returns 200.
+
+## 12. Claude "Invalid Key" via Bridge vs Direct CLI [Investigation — VERIFY BEFORE PATCHING]
+
+- **Status:** Open. **Do not patch until the verification steps below are completed on the failing device.** The root cause is suspected to be an environment/launch-context mismatch, not a code defect — patching blind risks hiding the real issue or masking a credentials misconfiguration that should surface as an error.
+- **Severity:** Medium (user-facing, but device/deployment-specific).
+- **Symptom:** On one device, sending a Claude request through the bridge returns an "invalid key" error, while running `claude` directly in the terminal works fine.
+- **Code context:** The Claude provider uses `@anthropic-ai/claude-agent-sdk`'s `query()` (`backend/src/claude/session.js:281`). It passes **no explicit credentials or env override** into the SDK — it relies entirely on the bridge process's inherited `process.env` plus the SDK's own `~/.claude/` lookup under the process's `$HOME`. The session `cwd` is the bridge's `process.cwd()` / `PROJECT_DIR` unless a prompt overrides it (`session.js:208-220`). SDK errors are caught and re-emitted verbatim as `{ type: "error", message: err.message }` (`session.js:290-294`), so "invalid key" on the glasses is the **literal Anthropic API error**, not a bridge-generated message.
+- **Strong hypothesis:** The bridge process did not inherit the same credentials the interactive `claude` CLI has. The SDK runs under the bridge's env/home/cwd, not the user's interactive shell — so direct `claude` works (shell/login has the creds) while the bridge (often started by a service manager, `launchd`, a different shell/user, or at boot) does not.
+- **Possible root causes (different fixes each — must distinguish before patching):**
+  1. Missing env var: the bridge's `process.env` lacks `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` that the interactive shell exports.
+  2. Wrong `$HOME`: the bridge runs under a different user/context, so `~/.claude/` (OAuth login) resolves to a home without the login.
+  3. Wrong cwd / project settings: credentials live in a project-scoped `.claude/settings.json` for a directory that isn't the bridge's cwd.
+  4. Stale key after rotation: the long-running bridge captured a key at launch that has since been rotated; a fresh `claude` process reads the current one.
+- **Verification steps (run on the failing device, then come back to patch):**
+  1. In the shell where `claude` works: `env | grep -iE 'anthropic|claude'`; `ls -la ~/.claude/ ~/.claude/.credentials.json`; check `~/.claude/settings.json` for keys.
+  2. Find the bridge PID (`pgrep -fl 'even-agent-home|src/index.js|bin/even-agent-home'`) and inspect its real env + cwd: `ps -E -p <PID> | tr ' ' '\n' | grep -iE 'anthropic|claude|home='`; `lsof -a -p <PID> -d cwd`. Compare to step 1.
+  3. Reproduce deterministically from a clean env: `env -i HOME="$HOME" PATH="$PATH" node -e "import('@anthropic-ai/claude-agent-sdk').then(async ({query}) => { const q = query({prompt:'hi', options:{cwd: process.cwd(), settingSources:['user','project']}}); for await (const m of q) { if (m.type==='result') console.log('OK'); } }).catch(e => console.error('FAILED:', e.message));"` — if this fails but interactive `claude` works, it confirms the SDK isn't getting the creds.
+  4. Check the backend log for the literal error: `[session] query error: …` and `[cli stderr] …` (`session.js:292`, `:273`). A `401` / `authentication_error` confirms credentials.
+  5. Determine how the bridge was launched on that device (same user/shell as `claude`? a service? at boot?). Launched from a different context is almost certainly the cause.
+- **Files:** `backend/src/claude/session.js`, `backend/src/claude/provider.js`, `backend/bin/even-agent-home.js`.
+- **Candidate fixes (pick AFTER verification confirms which cause):**
+  - Cause 1 (missing env): document launching the bridge from a shell with the key, OR add a scoped way to inject `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` into the SDK `query()` options / bridge env.
+  - Cause 2 (wrong `$HOME`): deployment-doc fix (launch bridge as the user owning the `claude` login), not a code change.
+  - Cause 3 (wrong cwd): allow pinning the claude session cwd per-deployment.
+  - Cause 4 (stale key): restart the bridge after key rotation; no patch.
+  - Regardless of cause (low-risk polish, only after confirmation): improve diagnostics — log which credential source the SDK resolved and surface a clearer "Claude authentication failed — check the bridge process can see your ANTHROPIC_API_KEY / claude login" message instead of the raw API error.
