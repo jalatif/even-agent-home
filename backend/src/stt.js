@@ -21,7 +21,7 @@ import os from "node:os";
 // This keeps secrets server-side (the key never reaches the glasses WebView,
 // which is distributed to end users). See docs for the URL-sniffing tradeoff.
 
-const BUILT_IN_MODEL = process.env.AGENTHOME_STT_MODEL || "Xenova/whisper-tiny.en";
+const BUILT_IN_MODEL = process.env.AGENTHOME_STT_MODEL || "Xenova/whisper-small.en";
 // PROVIDER_URL / PROVIDER_KEY are read lazily at call time (see activeProvider)
 // for the same module-load timing reason: the CLI sets these env vars after
 // this module's imports have already executed.
@@ -44,7 +44,10 @@ function getTranscriber() {
     if (!asrPromise) {
         asrPromise = pipeline("automatic-speech-recognition", BUILT_IN_MODEL, {
             // Quantized 8-bit weights: ~3x smaller download and faster CPU
-            // inference, with negligible accuracy loss for short voice queries.
+            // inference. small.en q8 is ~130MB download and ~1.6-2s/turn on a
+            // typical CPU (measured); tiny.en is ~40MB / ~0.3s. We default to
+            // small.en for accuracy in noisy/accented real-world use; override
+            // with AGENTHOME_STT_MODEL=Xenova/whisper-tiny.en for speed.
             // Specifying dtype explicitly also silences a transformers.js warning.
             dtype: { encoder_model: "q8", decoder_model_merged: "q8" },
         }).catch((err) => {

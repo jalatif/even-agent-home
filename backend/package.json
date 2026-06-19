@@ -1,6 +1,6 @@
 {
   "name": "even-agent-home",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Agent Home backend — HTTP bridge server that exposes multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi) to the Agent Home glasses client.",
   "main": "src/index.js",
   "type": "module",

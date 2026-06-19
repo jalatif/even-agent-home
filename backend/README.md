@@ -69,7 +69,7 @@ The bridge auth token is **not** read from the environment — pass it with `--t
 | `AGENTHOME_STT_PROVIDER_URL` | unset | Base URL of an external speech-to-text provider (e.g. `https://api.deepgram.com`). When unset, the built-in Whisper engine is used. Provider type is auto-detected from the hostname. |
 | `AGENTHOME_STT_PROVIDER_KEY` | unset | API key for the external STT provider. **Kept server-side only** — never sent to the glasses client. Required when `AGENTHOME_STT_PROVIDER_URL` is set. |
 | `AGENTHOME_STT_PROVIDER_TYPE` | unset | Force the STT provider contract explicitly (`deepgram` \| `openai-whisper`). Overrides hostname detection — use for self-hosted providers whose URL is not `deepgram.com` / `openai.com`. |
-| `AGENTHOME_STT_MODEL` | `Xenova/whisper-tiny.en` | Whisper model for the **built-in** engine only (ignored when an external provider is configured). |
+| `AGENTHOME_STT_MODEL` | `Xenova/whisper-small.en` | Whisper model for the **built-in** engine only (ignored when an external provider is configured). Default `small.en` (~130MB, better accuracy in noise/accents, ~1.6-2s/turn). Use `Xenova/whisper-tiny.en` for speed (~40MB, ~0.3s/turn, weaker accuracy). |
 
 See `--help` for the CLI equivalents.
 
@@ -101,7 +101,7 @@ Voice queries are transcribed server-side by `/api/transcribe`. The engine is se
 
 > **Security:** the provider API key is **server-side only**. It lives in the backend process and is never sent to the glasses client (which is distributed to end users). This follows Deepgram's and OpenAI's own guidance — client-side keys are forbidden and, for Deepgram, browser/WebView calls are also CORS-blocked. The contract test (`scripts/test-stt-contract.mjs`) asserts the key never appears in the response to `/api/transcribe`.
 
-**Built-in engine notes:** zero external dependencies — no `ffmpeg`, no Python. The Whisper model (`Xenova/whisper-tiny.en`, ~40MB quantized) downloads from HuggingFace on first voice use, then caches under `~/.agent-home/models/` (override with `HF_HOME`/`AGENTHOME_STT_MODEL`). Only the first-ever query needs network; the rest run offline. The pipeline is lazy-loaded, so the backend boots fast and users who never use voice pay no cost.
+**Built-in engine notes:** zero external dependencies — no `ffmpeg`, no Python. The Whisper model (`Xenova/whisper-small.en`, ~130MB quantized) downloads from HuggingFace on first voice use, then caches under `~/.agent-home/models/` (override with `HF_HOME`/`AGENTHOME_STT_MODEL`). Only the first-ever query needs network; the rest run offline. The pipeline is lazy-loaded, so the backend boots fast and users who never use voice pay no cost. Trade `AGENTHOME_STT_MODEL=Xenova/whisper-tiny.en` for faster turns (~0.3s vs ~2s) at lower accuracy.
 
 ## API surface
 
