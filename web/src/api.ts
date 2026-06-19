@@ -12,7 +12,6 @@ export const defaultApiBaseUrl = ''
 export interface AuthConfig {
   baseUrl: string
   token: string
-  sttUrl?: string
   debugView?: boolean
   yolo?: boolean
   autoScrollLastExchange?: boolean
@@ -86,8 +85,15 @@ function migrateLegacyConfig(parsed: Partial<AuthConfig>): Partial<AuthConfig> {
  * without wiping unrelated saved fields (yolo, debugView, scroll prefs,
  * etc.). Idempotent — repeated calls are cheap because they hit the cache
  * after the first hydration.
+ *
+ * Pass `force: true` to bypass the `configHydrated` short-circuit. This is
+ * needed after the EvenHub bridge becomes available: the first hydration
+ * (pre-bridge) reads from the `localStorage` fallback and sets the flag,
+ * so without `force` the post-bridge re-hydration would never consult the
+ * durable bridge KV store and would lock in stale/empty defaults.
  */
-export async function hydrateApiConfig(): Promise<AuthConfig> {
+export async function hydrateApiConfig(force = false): Promise<AuthConfig> {
+  if (configHydrated && !force) return currentConfig
   let saved: Partial<AuthConfig> = {}
   try {
     const raw = await storageGet(API_CONFIG_KEY)
@@ -113,7 +119,8 @@ export async function hydrateApiConfig(): Promise<AuthConfig> {
   return currentConfig
 }
 
-export async function hydrateAgentConfigs(): Promise<Record<string, AgentProviderConfig>> {
+export async function hydrateAgentConfigs(force = false): Promise<Record<string, AgentProviderConfig>> {
+  if (agentConfigsHydrated && !force) return currentAgentConfigs
   try {
     const raw = await storageGet(AGENT_CONFIGS_KEY)
     if (raw) currentAgentConfigs = JSON.parse(raw)
@@ -265,8 +272,12 @@ export class AgentHomeApi {
   }
 
   async transcribeAudio(pcmData: Uint8Array): Promise<string> {
-    const url = this.config.sttUrl ? this.config.sttUrl : `${this.apiBaseUrl}/transcribe`
-    const data = await this.fetchEncrypted(url, {
+    // STT is always resolved by the BACKEND. The provider (built-in Whisper,
+    // Deepgram, OpenAI Whisper) is selected by the backend's
+    // --stt-provider-url / --stt-provider-key flags, keeping any provider API
+    // key server-side only. The frontend just ships the raw PCM over the
+    // encrypted bridge channel to /api/transcribe.
+    const data = await this.fetchEncrypted(`${this.apiBaseUrl}/transcribe`, {
       method: 'POST',
       body: JSON.stringify({ audio: Array.from(pcmData) })
     })

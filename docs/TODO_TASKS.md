@@ -240,3 +240,92 @@
   - Cause 3 (wrong cwd): allow pinning the claude session cwd per-deployment.
   - Cause 4 (stale key): restart the bridge after key rotation; no patch.
   - Regardless of cause (low-risk polish, only after confirmation): improve diagnostics — log which credential source the SDK resolved and surface a clearer "Claude authentication failed — check the bridge process can see your ANTHROPIC_API_KEY / claude login" message instead of the raw API error.
+
+## 13. Hardware Test Findings (2026-06-18, real G2 + phone)
+
+Five issues surfaced during end-to-end testing on real hardware. Root causes traced; fixes applied where the fix restores intended behavior.
+
+### 13.1 Frontend settings lost on app re-open [Resolved]
+- **Severity:** High (broke the core "connect once" flow).
+- **Symptom:** Re-opening the app required reconnecting to the backend and re-entering the token; settings did not persist.
+- **Root cause:** `web/src/App.tsx` captured the bridge storage methods off the instance:
+  `const sdkGet = bridge.getLocalStorage; const sdkSet = bridge.setLocalStorage;`
+  These are **unbound** — when later invoked as `sdkGet(key)`, `this` is `undefined`, so the call throws `Cannot read properties of undefined (reading 'sdk')`. The surrounding `try/catch` swallowed the error silently, so every read/write fell back to `window.localStorage`, which the phone host WebView clears on relaunch. Verified with a minimal repro (both read and write threw).
+- **Secondary cause:** the post-bridge re-hydration in `App.tsx` called `hydrateApiConfig()` / `hydrateAgentConfigs()` a second time, but those short-circuit on `configHydrated === true` (already set by the pre-bridge `localStorage` pass). So even with the bridge wired, the durable KV store was never consulted.
+- **Resolution:**
+  1. Capture the `bridge` instance and call `bridge.getLocalStorage(key)` / `bridge.setLocalStorage(key, value)` on it directly (bound).
+  2. Add `force = false` param to `hydrateApiConfig` / `hydrateAgentConfigs`; the post-bridge re-hydration passes `force: true` to bypass the cache and consult the bridge KV store.
+  3. Regression test `hydrateApiConfig force=true re-reads from storage after an initial hydrate`.
+- **Files:** `web/src/App.tsx`, `web/src/api.ts`, `web/test/storage.test.ts`.
+
+### 13.2 Scan QR — Camera permission denied [Resolved — QR flow removed]
+- **Severity:** Was Medium.
+- **Symptom:** Tapping "Scan QR Code" on the phone returned "Camera permission was blocked…", even though the Even Realities host app had OS camera permission and `app.json` declared `camera`.
+- **Root cause (confirmed via Even Hub docs research):** `html5-qrcode` calls `navigator.mediaDevices.getUserMedia()`. **Even Hub does not expose the phone camera to plugin WebViews** — the host does not implement WebView media-capture delegation, so `getUserMedia` rejects with `NotAllowedError` regardless of OS permission or the manifest. The Even Hub FAQ states it plainly: *"Can my app access the camera? — No."* and *"Pure WebView sandbox… no media."* The Device APIs doc lists the complete bridge surface (inputs, `audioControl`, `imuControl`, `getDeviceInfo`, `getUserInfo`, `getLocalStorage`/`setLocalStorage`) — **no camera/scan method**. No working phone-camera plugin example exists in official templates, the `BxNxM/even-dev` simulator, or any third-party repo surveyed. The `app.json` `camera` permission name was valid (it is in the allowed set), but a valid manifest permission does not imply a working runtime capability.
+- **Resolution (2026-06-18):** Removed the entire QR-scan flow since the camera path is a dead end on Even Hub and users connect via URL + token anyway. Deleted `web/src/QRScanner.tsx`, removed the `QRScanner` import + `showQRScanner` state + `handleScan` handler + the "Quick Connect / Scan QR Code" card from `web/src/App.tsx`, uninstalled the `html5-qrcode` dependency (drops the 368KB `qr-vendor` bundle chunk — modules 52 → 27), and removed the now-unused `camera` permission from `app.json`. Connection is now exclusively via the Backend URL + Secure Token fields (a paste of a full `?token=` URL still auto-splits via `parseConnectionUrl`/`handleBaseUrlPaste`). Verified: `tsc` clean, `npm run build` success, 7/7 unit tests pass.
+- **If camera scan is ever needed:** re-add only if Even Hub ships a native scan bridge (ask Even: dev portal / `hello@evenrealities.com`); `getUserMedia` will not work.
+- **Files:** `web/src/QRScanner.tsx` (deleted), `web/src/App.tsx`, `web/package.json`, `web/package-lock.json`, `app.json`.
+- **Sources:** https://hub.evenrealities.com/docs/reference/faq , https://hub.evenrealities.com/docs/build/device-apis , https://hub.evenrealities.com/docs/ship/packaging , https://hub.evenrealities.com/docs/getting-started/architecture
+
+### 13.3 Voice failed — `spawn ffmpeg ENOENT` [Resolved — STT engine swapped to transformers.js]
+- **Severity:** Was Medium (broke voice input on stock installs).
+- **Symptom:** Glasses showed "Voice failed: Speech transcription failed. Verify ffmpeg and whisper-ctranslate2 are installed." Backend log: `[STT] transcription failed: spawn ffmpeg ENOENT`.
+- **Root cause:** `backend/src/stt.js` shelled out to `ffmpeg` (PCM→WAV) and `whisper-ctranslate2` (a **Python package**) for STT. On a fresh device these were not installed / not on PATH. This was a deployment gap — the backend hard-depended on external binaries + a Python runtime.
+- **Resolution (2026-06-18):** Replaced the whole STT engine with `@huggingface/transformers` (transformers.js v3), which runs Whisper **inside Node** via ONNX Runtime (CPU/WASM). Voice input now needs **zero external dependencies** — no `ffmpeg`, no Python, no `pip install`. `npm install -g even-agent-home` is sufficient.
+  - Model: `Xenova/whisper-tiny.en`, **q8-quantized** (~40MB), downloaded from HuggingFace on **first voice use** then cached at `~/.agent-home/models/` (override with `HF_HOME` / `AGENTHOME_STT_MODEL`). Only the first-ever query needs network; subsequent ones are offline.
+  - The pipeline is **lazy-loaded** on first transcription so the backend still boots fast; users who never use voice never pay the memory cost.
+  - transformers.js takes **Float32 PCM directly**, so the `ffmpeg` PCM→WAV conversion step was removed entirely — no subprocess at all.
+  - Verified end-to-end: `POST /api/transcribe` returns an accurate transcript in ~1s; empty-input and sub-0.5s clips are handled cleanly; network/download failures surface a clear message.
+- **Tradeoff:** CPU/WASM inference is slower than optimized ctranslate2, but fine for short voice *queries* (a few seconds of speech). For long-form transcription the old engine would be faster, but that is not this product's use case.
+- **Files:** `backend/src/stt.js` (rewritten), `backend/package.json` (+ `@huggingface/transformers`).
+
+### 13.4 Claude "No conversation found with sessionID" on existing session [Resolved]
+- **Severity:** High (broke resuming any saved Claude session).
+- **Symptom:** Sending a message to an existing Claude session from the phone returns "Agent Error: Claude Code returned an error results: No conversation found with sessionID: <ID>". (New sessions instead hit the unrelated "Invalid API Key" — see §12.)
+- **Root cause:** The Claude SDK's `query({ resume: sessionId })` resolves the conversation file **relative to the cwd** passed to it. `backend/src/claude/session.js` set `lockedCwd = cwd ?? process.cwd()`, and the `/prompt` route passes `cwd = req.query.cwd || process.env.PROJECT_DIR` (the **bridge's** cwd). When that differs from the directory the session was originally created in, the SDK cannot find `<sessionId>.jsonl` → "No conversation found". Confirmed the jsonl records the original `cwd` per session, but it was never used on resume.
+- **Resolution:** Added `readSessionCwd(filePath)` in `backend/src/claude/provider.js` (scans the session's jsonl for the first record carrying a `cwd` field). On resume, the recovered original cwd is passed to `session.start(sessionId, originalCwd)`, falling back to the caller's cwd only when no file/cwd can be recovered (e.g. brand-new session).
+- **Files:** `backend/src/claude/provider.js`.
+
+### 13.5 UP/Down/Click input latency ~1s [Resolved]
+- **Severity:** Medium (perceived sluggishness on every hardware gesture).
+- **Symptom:** Up/Down/Click/Double-click take ~1s to take effect.
+- **Root cause:** `EvenHubGlassesBridge.renderSidebarPanel` dispatched each `textContainerUpgrade` call **serially in an `await` loop** (`web/src/bridge/evenBridge.ts`). Each call is an independent container region (title/sidebar/panel-body/panel-box/footer) AND a separate firmware round-trip on real G2 hardware (~50–200ms each). A single partial render with up to 5 updates therefore took N×latency ≈ up to ~1s, and the next input's render was gated on the previous flush finishing.
+- **Resolution:** Dispatch all `textContainerUpgrade` updates concurrently with `Promise.allSettled(...)`. The updates target independent regions, so concurrent dispatch is safe and collapses a full panel update to a single round-trip (bounded by the slowest update). `allSettled` keeps the flush moving even if one region rejects.
+- **Note:** This is a render-pipeline behavior change (serial → concurrent) but produces a visually identical result since the regions are independent. Flagged per the "ask before behavior changes" policy.
+- **Files:** `web/src/bridge/evenBridge.ts`.
+
+## 14. Testing Harness Hardening + STT Provider Architecture (2026-06-18)
+
+Follow-up work after the §13 hardware findings: (a) closed the harness coverage gaps that let those bugs escape, and (b) redesigned STT to eliminate the setup dependency that caused Issue 3.
+
+### 14.1 New harness tests — closes 5 of 6 hardware-escape gaps [Resolved]
+After auditing why each §13 issue reached hardware undetected, added five tests targeting the specific coverage holes. Of the six hardware-escape issues, these now catch five pre-hardware (only Issue 2 camera remains genuinely hardware-only — it depends on the Even Hub host's native media-capture delegation).
+
+| Test | File | Catches |
+| --- | --- | --- |
+| Bridge unit tests (fake SDK) | `web/test/bridge.test.ts` (9 tests) | Issue 1 (unbound storage methods) + Issue 5 (serial render latency) |
+| STT contract test | `scripts/test-stt-contract.mjs` | Issue 3 (missing STT dep) + provider proxy contract + key-leak |
+| Claude resume test | `scripts/test-claude-resume.mjs` (8 tests) | Issue 4 (session cwd on resume) |
+| Dependency-presence self-check | `scripts/test-dependency-presence.mjs` | missing runtime deps + agent bins before first use |
+
+- **Proven to have teeth:** the Issue 5 latency test was verified to FAIL when the serial `textContainerUpgrade` loop is reintroduced (429ms vs 184ms parallel), then restored to green.
+- **Testability change:** exported `readSessionCwd` from `backend/src/claude/provider.js` (was private; pure function, no behavior change). Added `.ts` extensions to two imports in `web/src/bridge/evenBridge.ts` (`allowImportingTsExtensions` already enabled) so the module is Node-runnable.
+- **Wiring:** new npm scripts in `web/package.json` — `test:stt`, `test:resume`, `test:deps`, `test:all` (runs unit + deps + resume + stt). Bridge tests auto-discovered by `test:unit`.
+- **Status:** all green (16 unit + deps + 8 resume + STT).
+
+### 14.2 STT engine → built-in transformers.js [Resolved]
+Replaced the external `ffmpeg` + `whisper-ctranslate2` (Python) STT with `@huggingface/transformers` running Whisper in Node via ONNX Runtime. Voice input now needs zero external dependencies — `npm install -g even-agent-home` is sufficient. See §13.3.
+
+### 14.3 STT provider architecture — backend proxy [Resolved]
+Redesigned STT so the provider is selected **server-side**, with all API keys kept on the backend (never in the glasses WebView, which is distributed to end users — this is Deepgram's/OpenAI's own guidance, and browser→Deepgram is also CORS-blocked).
+- **Provider auto-detected from URL hostname:** `deepgram.com` → Deepgram contract, `openai.com` → OpenAI Whisper, no URL → built-in Whisper. `--stt-provider-type` overrides for self-hosted providers.
+- **CLI flags:** `--stt-provider-url`, `--stt-provider-key`, `--stt-provider-type` (→ `AGENTHOME_STT_PROVIDER_*` env vars).
+- **PCM→WAV wrapping** ported from the (previously-dead) `web/src/audio/wav.ts` into `backend/src/stt.js` — Deepgram/OpenAI reject raw PCM; the glasses stream raw s16le PCM which the backend wraps in a 44-byte RIFF/WAVE header before proxying.
+- **Frontend simplified:** removed `sttUrl` from `AuthConfig`, deleted the Settings input, `transcribeAudio` always hits `/api/transcribe`. The frontend knows nothing about STT providers.
+- **Module-load timing fix:** provider/URL/key resolution moved from module-eval time to call time (`activeProvider()`), because the CLI sets the env vars AFTER this module's top-level imports run (bin → index.js → core.js → stt.js). Caching at import would always see an empty env.
+- **Verified:** mock-Deepgram contract test (WAV body + `Token <key>` + nova-3 + key-not-in-response) + real Deepgram key end-to-end (nova-3, accurate transcript in ~626ms, key stayed server-side).
+- **Files:** `backend/src/stt.js` (rewritten), `backend/bin/even-agent-home.js` (flags), `web/src/api.ts`, `web/src/App.tsx`, `scripts/test-stt-contract.mjs` (rewritten), `backend/README.md` (STT section + env vars).
+
+### 14.4 QR scan flow removed [Resolved]
+Removed the entire QR-scan flow (camera path was a dead end on Even Hub — the host does not expose the phone camera to plugin WebViews). Connection is now exclusively via Backend URL + Secure Token. Uninstalled `html5-qrcode` (dropped the 368KB `qr-vendor` bundle), removed the `camera` permission from `app.json`. See §13.2.
+- **Files:** `web/src/QRScanner.tsx` (deleted), `web/src/App.tsx`, `web/package.json`, `app.json`.

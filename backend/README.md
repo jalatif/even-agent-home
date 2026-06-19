@@ -25,6 +25,15 @@ even-agent-home --token my-secret    # set a known bridge auth token
 even-agent-home --port 8765          # custom port
 even-agent-home --tailscale          # bind to Tailscale IP (LAN-reachable)
 even-agent-home --debug              # verbose logs
+
+# Speech-to-text (voice input). Built-in Whisper is used by default — no flags needed.
+# To use an external provider instead (key stays server-side, never reaches the glasses):
+even-agent-home \
+  --stt-provider-url https://api.deepgram.com \
+  --stt-provider-key <your-deepgram-key>
+even-agent-home \
+  --stt-provider-url https://api.openai.com \
+  --stt-provider-key <your-openai-key>
 ```
 
 On first start (and on every start where `--token` is not passed) the server generates a random 32-character hex token and prints a connect URL containing it, e.g.:
@@ -51,6 +60,10 @@ The bridge auth token is **not** read from the environment — pass it with `--t
 | `DEBUG` | `0` | If `1`, enable verbose logging |
 | `TEST_MODE` | `0` | If `1`, disable the auth check (used by the integration tests only) |
 | `PROJECT_DIR` | `process.cwd()` | CWD printed in the startup banner |
+| `AGENTHOME_STT_PROVIDER_URL` | unset | Base URL of an external speech-to-text provider (e.g. `https://api.deepgram.com`). When unset, the built-in Whisper engine is used. Provider type is auto-detected from the hostname. |
+| `AGENTHOME_STT_PROVIDER_KEY` | unset | API key for the external STT provider. **Kept server-side only** — never sent to the glasses client. Required when `AGENTHOME_STT_PROVIDER_URL` is set. |
+| `AGENTHOME_STT_PROVIDER_TYPE` | unset | Force the STT provider contract explicitly (`deepgram` \| `openai-whisper`). Overrides hostname detection — use for self-hosted providers whose URL is not `deepgram.com` / `openai.com`. |
+| `AGENTHOME_STT_MODEL` | `Xenova/whisper-tiny.en` | Whisper model for the **built-in** engine only (ignored when an external provider is configured). |
 
 See `--help` for the CLI equivalents.
 
@@ -67,6 +80,22 @@ Each agent is launched via its own CLI tool that must be on `$PATH` for the corr
 | `antigravity` | `gemini` |
 | `oh-my-pi` | bundled |
 | `pi` | bundled |
+
+## Speech-to-text (voice input)
+
+Voice queries are transcribed server-side by `/api/transcribe`. The engine is selected by the backend's `--stt-provider-url` / `--stt-provider-key` flags (or the matching `AGENTHOME_STT_PROVIDER_*` env vars) — the frontend knows nothing about STT providers and just ships raw PCM to the bridge.
+
+| Provider | When | Auth | Request | Response path |
+| --- | --- | --- | --- | --- |
+| **Built-in Whisper** (default) | no `--stt-provider-url` | — | runs `@huggingface/transformers` in Node (CPU/WASM) | — |
+| **Deepgram** | URL hostname contains `deepgram.com` (or `--stt-provider-type deepgram`) | `Authorization: Token <key>` | WAV body, `model=nova-3&smart_format=true` | `results.channels[0].alternatives[0].transcript` |
+| **OpenAI Whisper** | URL hostname contains `openai.com` (or `--stt-provider-type openai-whisper`) | `Authorization: Bearer <key>` | multipart form (`whisper-1`) | `text` |
+
+**Provider type is auto-detected from the URL hostname.** Pass `--stt-provider-type deepgram|openai-whisper` to force it for a self-hosted provider whose hostname doesn't match (e.g. a local Whisper server).
+
+> **Security:** the provider API key is **server-side only**. It lives in the backend process and is never sent to the glasses client (which is distributed to end users). This follows Deepgram's and OpenAI's own guidance — client-side keys are forbidden and, for Deepgram, browser/WebView calls are also CORS-blocked. The contract test (`scripts/test-stt-contract.mjs`) asserts the key never appears in the response to `/api/transcribe`.
+
+**Built-in engine notes:** zero external dependencies — no `ffmpeg`, no Python. The Whisper model (`Xenova/whisper-tiny.en`, ~40MB quantized) downloads from HuggingFace on first voice use, then caches under `~/.agent-home/models/` (override with `HF_HOME`/`AGENTHOME_STT_MODEL`). Only the first-ever query needs network; the rest run offline. The pipeline is lazy-loaded, so the backend boots fast and users who never use voice pay no cost.
 
 ## API surface
 

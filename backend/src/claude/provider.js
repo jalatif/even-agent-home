@@ -29,6 +29,40 @@ function readLastLine(filePath) {
         return null;
     }
 }
+/**
+ * Read the working directory a Claude session was created in, by scanning the
+ * session's jsonl for the first record carrying a `cwd` field (e.g. the
+ * `attachment`/`summary` lines written at session start). Returns null if no
+ * cwd can be recovered.
+ *
+ * This matters for resume: the SDK's `query({ resume })` resolves the
+ * conversation file relative to the cwd passed to it. If the bridge resumes
+ * with its own `process.cwd()` (or a `PROJECT_DIR` that differs from the
+ * session's original dir), the SDK cannot locate `<sessionId>.jsonl` and the
+ * turn fails with "No conversation found with sessionID: …". Pinning the
+ * session's original cwd on resume avoids that.
+ */
+export function readSessionCwd(filePath) {
+    try {
+        const data = readFileSync(filePath, "utf8");
+        for (const line of data.split("\n")) {
+            if (!line)
+                continue;
+            try {
+                const rec = JSON.parse(line);
+                if (typeof rec.cwd === "string" && rec.cwd.trim())
+                    return rec.cwd;
+            }
+            catch {
+                // Skip unparseable lines.
+            }
+        }
+    }
+    catch {
+        // File unreadable — caller falls back to its own cwd.
+    }
+    return null;
+}
 /** Determine session status by reading the jsonl file directly. */
 export function claudeSessionStatus(sessionId) {
     const file = findSessionFile(sessionId);
@@ -103,12 +137,29 @@ export function createClaudeProvider(emit) {
         let session;
         if (sessionId)
             session = sessions.get(sessionId);
-        if (sessionId && !session && !findSessionFile(sessionId)) {
-            throw Object.assign(new Error(`Claude session not found: ${sessionId}`), { statusCode: 404 });
+        let sessionFile = null;
+        if (sessionId && !session) {
+            sessionFile = findSessionFile(sessionId);
+            if (!sessionFile) {
+                throw Object.assign(new Error(`Claude session not found: ${sessionId}`), { statusCode: 404 });
+            }
         }
         if (!session) {
+            // On resume, pin the session's ORIGINAL cwd so the SDK can locate
+            // the conversation file. The caller-supplied `cwd` (or the bridge's
+            // process.cwd()) frequently differs from where the session was
+            // created, which makes `query({ resume })` fail with
+            // "No conversation found with sessionID". The jsonl records the
+            // real cwd; fall back to the caller's cwd only if we can't recover
+            // it (e.g. brand-new session with no file yet).
+            let resumeCwd = cwd;
+            if (sessionId && sessionFile) {
+                const original = readSessionCwd(sessionFile);
+                if (original)
+                    resumeCwd = original;
+            }
             session = makeSession(sessionId);
-            await session.start(sessionId, cwd);
+            await session.start(sessionId, resumeCwd);
         }
         // Emit user_prompt when session ID is known
         session.onIdReady((sid) => {

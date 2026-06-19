@@ -180,3 +180,38 @@ test('hydrateApiConfig migrates legacy autoScrollMode into autoScrollLastExchang
   assert.equal(cfg.scrollSpeed, 'slow')
   assert.equal('autoScrollMode' in cfg, false, 'legacy field should be stripped')
 })
+
+test('hydrateApiConfig force=true re-reads from storage after an initial hydrate', async () => {
+  __resetApiStateForTests()
+  const store = installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
+
+  // First hydration finds nothing → empty defaults. This mirrors the
+  // pre-bridge hydration in App.tsx (bridge KV not available yet).
+  let cfg = await hydrateApiConfig()
+  assert.equal(cfg.baseUrl, '')
+  assert.equal(cfg.token, '')
+
+  // Later (simulating the EvenHub bridge becoming available) the durable
+  // store is populated. Without force, the cached defaults would win and
+  // the real connection settings would never load — exactly the bug where
+  // re-opening the app lost the user's connection.
+  store.setItem(
+    'apiConfig',
+    JSON.stringify({
+      baseUrl: 'http://bridge-host:3456',
+      token: 'bridge-token',
+      yolo: true,
+    }),
+  )
+  cfg = await hydrateApiConfig(true)
+  assert.equal(cfg.baseUrl, 'http://bridge-host:3456', 'forced re-hydrate must re-read storage')
+  assert.equal(cfg.token, 'bridge-token')
+  assert.equal(cfg.yolo, true)
+
+  // Without force, the second call must return the cache (idempotent).
+  const cached = await hydrateApiConfig()
+  assert.equal(cached.baseUrl, 'http://bridge-host:3456')
+})

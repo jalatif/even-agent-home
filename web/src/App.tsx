@@ -12,7 +12,6 @@ import type { AgentProviderConfig, AuthConfig } from './api'
 import { AgentHomeController } from './controller/agentHomeController'
 import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
-import QRScanner from './QRScanner'
 import { registerBridgeStorage } from './storage'
 import './style.css'
 
@@ -89,7 +88,6 @@ export default function App() {
   const [controller, setController] = useState<AgentHomeController | null>(null)
   const [screenState, setScreenState] = useState<AppState | null>(null)
   const [activeTab, setActiveTab] = useState<'main' | 'settings'>('main')
-  const [showQRScanner, setShowQRScanner] = useState(false)
 
   interface AgentStatus {
     id: string;
@@ -126,14 +124,20 @@ export default function App() {
       // available. Subsequent reads and writes from `api.ts` go through
       // the bridge (survives WebView reload); `localStorage` is just a
       // fallback for browser dev.
-      const sdkGet = bridge.getLocalStorage
-      const sdkSet = bridge.setLocalStorage
+      //
+      // IMPORTANT: capture the `bridge` instance and call methods *on* it.
+      // Grabbing the methods off the instance (`const sdkGet = bridge.getLocalStorage`)
+      // detaches them from their receiver — when invoked later, `this` is
+      // `undefined` and the call throws "Cannot read properties of undefined
+      // (reading 'sdk')". The old code swallowed that error silently and
+      // every read/write fell back to window.localStorage, which the phone
+      // WebView clears on relaunch — so settings never persisted.
       registerBridgeStorage(() => {
-        if (typeof sdkGet !== 'function' || typeof sdkSet !== 'function') return null
+        if (typeof bridge.getLocalStorage !== 'function' || typeof bridge.setLocalStorage !== 'function') return null
         return {
           async getItem(key) {
             try {
-              const v = await sdkGet(key)
+              const v = await bridge.getLocalStorage(key)
               return v || null
             } catch (e) {
               console.warn('[storage] bridge getLocalStorage failed', e)
@@ -142,7 +146,7 @@ export default function App() {
           },
           async setItem(key, value) {
             try {
-              const ok = await sdkSet(key, value)
+              const ok = await bridge.setLocalStorage(key, value)
               if (!ok) console.warn('[storage] bridge setLocalStorage returned false', key)
             } catch (e) {
               console.warn('[storage] bridge setLocalStorage failed', e)
@@ -151,11 +155,15 @@ export default function App() {
         }
       })
       // Re-hydrate once the bridge is available so the first paint does
-      // not lock in a default before the SDK KV store is consulted.
+      // not lock in a default before the SDK KV store is consulted. Pass
+      // `force: true` because the pre-bridge hydration already set the
+      // `configHydrated`/`agentConfigsHydrated` flags from the localStorage
+      // fallback — without force, the second call would short-circuit and
+      // never consult the bridge KV store, locking in stale defaults.
       void (async () => {
         const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
-          hydrateApiConfig(),
-          hydrateAgentConfigs(),
+          hydrateApiConfig(true),
+          hydrateAgentConfigs(true),
         ])
         if (unmounted) return
         setConfig(hydratedConfig)
@@ -187,16 +195,6 @@ export default function App() {
     void saveAgentConfigs(agentConfigs)
     setAgentRefreshNonce(value => value + 1)
     if (controller) controller.boot()
-  }
-
-  const handleScan = (url: string) => {
-    const parsed = parseConnectionUrl(url);
-    if (parsed) {
-      setConfig(prev => ({ ...prev, baseUrl: parsed.baseUrl, token: parsed.token }));
-    } else {
-      alert('Invalid QR code: expected a connection URL like http://host:port?token=…');
-    }
-    setShowQRScanner(false);
   }
 
   // Pasting a full connection URL into the Backend URL field should auto-split
@@ -580,24 +578,6 @@ export default function App() {
           </section>
         ) : (
           <div className="settings-view">
-            {showQRScanner && (
-              <QRScanner 
-                onScan={handleScan} 
-                onClose={() => setShowQRScanner(false)} 
-              />
-            )}
-            <section className="card config-card" style={{ textAlign: 'center', padding: '2rem 1rem', marginBottom: '1rem' }}>
-              <h2 style={{ marginBottom: '10px' }}>Quick Connect</h2>
-              <p style={{ color: 'var(--text-muted)', marginBottom: '15px' }}>Scan QR code or enter details manually below</p>
-              <button
-                className="btn primary-btn"
-                onClick={() => setShowQRScanner(true)}
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '1.1rem', padding: '10px 20px', margin: '0 auto' }}
-              >
-                📷 Scan QR Code
-              </button>
-            </section>
-
             <section className="card config-card">
               <h2>Backend Configuration</h2>
               <div className="input-group" style={{ marginTop: '1rem' }}>
@@ -616,15 +596,6 @@ export default function App() {
                   type="password"
                   value={config.token}
                   onChange={e => setConfig({...config, token: e.target.value})}
-                />
-              </div>
-              <div className="input-group">
-                <label>STT URL Override (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. http://localhost:8080/transcribe"
-                  value={config.sttUrl || ''}
-                  onChange={e => setConfig({...config, sttUrl: e.target.value})}
                 />
               </div>
             </section>

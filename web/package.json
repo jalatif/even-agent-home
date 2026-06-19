@@ -9,11 +9,14 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:unit": "node --experimental-strip-types --no-warnings --test test/**/*.test.ts",
-    "test:simulator": "node ../scripts/fuzzy-test.mjs"
+    "test:simulator": "node ../scripts/fuzzy-test.mjs",
+    "test:stt": "node ../scripts/test-stt-contract.mjs",
+    "test:resume": "node ../scripts/test-claude-resume.mjs",
+    "test:deps": "node ../scripts/test-dependency-presence.mjs",
+    "test:all": "npm run test:unit && npm run test:deps && npm run test:resume && npm run test:stt"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.10",
-    "html5-qrcode": "^2.3.8",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

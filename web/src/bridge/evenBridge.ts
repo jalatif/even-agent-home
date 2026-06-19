@@ -9,12 +9,12 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import type { GlassesBridge } from '../controller/agentHomeController'
 import type { AppInput, ScreenModel } from '../controller/model'
-import { createInputCoalescer, mapEvenHubEvent } from './eventMapping'
+import { createInputCoalescer, mapEvenHubEvent } from './eventMapping.ts'
 import {
   isFixtureMode,
   logTestEvent,
   summarizeScreenModel,
-} from '../testMode'
+} from '../testMode.ts'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AuthConfig = any;
@@ -233,8 +233,20 @@ export class EvenHubGlassesBridge implements GlassesBridge {
     const updates = buildSidebarPanelUpdates(model, this.lastSidebarModel)
     logTestEvent('bridge', { method: 'textContainerUpgrade', args: { sequence, generation: this.pageGeneration, count: updates.length, hasPanelBox: Boolean(model.panelBox) } })
     logTestEvent('render', { sequence, generation: this.pageGeneration, partial: true, model: summarizeScreenModel(model), attempted: true })
-    for (const update of updates) {
-      await withTimeout(this.sdk.textContainerUpgrade(update), 1000, 'textContainerUpgrade')
+    // Dispatch every container update concurrently. Each `textContainerUpgrade`
+    // is an independent region (title/sidebar/panel-body/panel-box/footer) and
+    // a firmware round-trip on real G2 hardware (~50–200ms each). Awaiting them
+    // serially made a single partial render take up to N×latency — the cause of
+    // the ~1s UP/DOWN/CLICK lag. Running them in parallel collapses a full
+    // panel update to a single round-trip (bounded by the slowest update).
+    // allSettled keeps the flush moving even if one region rejects; failures
+    // are still surfaced to the caller via the .finally counters below.
+    if (updates.length > 0) {
+      // Hoist the narrowed method into a const so TS keeps the non-undefined
+      // narrowing inside the map callback (the `typeof ... !== 'function'`
+      // guard above does not survive into the arrow's closure otherwise).
+      const upgrade = this.sdk.textContainerUpgrade
+      await Promise.allSettled(updates.map((update) => withTimeout(upgrade(update), 1000, 'textContainerUpgrade')))
     }
     this.lastSidebarModel = model
     this.partialRenderFlushed += 1
