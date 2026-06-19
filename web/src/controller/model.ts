@@ -89,7 +89,7 @@ export function getSpinnerFrame(): string {
   return SPINNER_FRAMES[idx];
 }
 
-export function getScreenModel(state: AppState): ScreenModel {
+export function getScreenModel(state: AppState, turnStartedAt?: number | null): ScreenModel {
   switch (state.screen) {
     case 'loading':
       return { kind: 'text', title: 'AgentHome', body: state.message }
@@ -150,7 +150,17 @@ export function getScreenModel(state: AppState): ScreenModel {
         sidebarSelected: 0,
         panelTitle: '',
         panelBody: visibleLines.join('\n'),
-        panelFooter: state.agentError ? `Waiting for input | Agent Error` : (state.isThinking ? `Agent is working ${getSpinnerFrame()}` : 'Waiting for input'),
+        panelFooter: state.agentError
+          ? `Waiting for input | Agent Error`
+          : (state.isThinking
+            // Show how long the current agent turn has been running. The
+            // controller's 500ms animation interval re-renders the footer
+            // while thinking, so the counter advances roughly every half
+            // second; we display whole seconds (Math.max(1, …) so it never
+            // shows "0s" on a fresh turn). Resets to 0s on the next turn
+            // because turnStartedAt is cleared when isThinking flips false.
+            ? `Agent is working ${getSpinnerFrame()} | ${turnStartedAt ? Math.max(1, Math.floor((Date.now() - turnStartedAt) / 1000)) : 0}s`
+            : 'Waiting for input'),
         fullWidth: true
       }
     }

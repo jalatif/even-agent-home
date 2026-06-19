@@ -69,6 +69,10 @@ export class AgentHomeController {
   private autoScrollInterval: any = null
   private backgroundTasks: Set<string> = new Set()
   private turnTimeout: ReturnType<typeof setTimeout> | null = null
+  // Wall-clock timestamp (ms) the current agent turn started — i.e. when
+  // isThinking flipped to true. Cleared (null) when the turn ends. Drives the
+  // "Agent is working | Ns" elapsed counter in the messages footer.
+  private turnStartedAt: number | null = null
   private enabledAgents: string[] = []
   
   constructor(bridge?: GlassesBridge) {
@@ -208,13 +212,24 @@ export class AgentHomeController {
   }
 
   private setState(newState: AppState, options: { renderBridge?: boolean; skipListeners?: boolean; partialRender?: boolean } = { renderBridge: true }) {
+    // Track the working-turn timer. `isThinking` lives on several screen
+    // types; read it generically. When it flips true, stamp the start time so
+    // the footer can show an elapsed counter ("Agent is working | Ns"). When it
+    // flips false (turn done / idle), clear it so the next turn restarts from 0.
+    const wasThinking = !!(this.state as { isThinking?: boolean }).isThinking
+    const nowThinking = !!(newState as { isThinking?: boolean }).isThinking
+    if (!wasThinking && nowThinking) {
+      this.turnStartedAt = Date.now()
+    } else if (wasThinking && !nowThinking) {
+      this.turnStartedAt = null
+    }
     this.state = newState
     logStateWork(newState)
     if (!options.skipListeners) {
       for (const listener of this.listeners) listener(this.state)
     }
     if (this.bridge && options.renderBridge !== false) {
-      const model = getScreenModel(this.state)
+      const model = getScreenModel(this.state, this.turnStartedAt)
       if (options.partialRender && model.kind === 'sidebar' && this.bridge.enqueueSidebarPanel) {
         this.bridge.enqueueSidebarPanel(model)
       } else {
