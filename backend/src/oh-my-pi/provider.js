@@ -40,6 +40,15 @@ const SESSION_CACHE_TTL_MS = 30000;
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_HISTORY = 50;
 const MAX_PHONE_MAP_ENTRIES = 500;
+
+// Kill the whole omp process GROUP. omp is spawned detached (its own session)
+// so it can't grab the backend's controlling TTY; killing just the leader
+// would orphan its subprocesses. Negative PID = signal the whole group.
+function killProcGroup(proc, signal = "SIGTERM") {
+    if (!proc || proc.killed) return;
+    try { process.kill(-proc.pid, signal); }
+    catch { try { proc.kill(signal); } catch {} }
+}
 /** Resolve symlinks + macOS /private/* normalisation, matching omp's resolveEquivalentPath. */
 function resolveEquivalentPath(inputPath) {
     const resolved = resolve(inputPath);
@@ -237,13 +246,30 @@ export function createOhMyPiProvider(emit) {
         const proc = spawn(OMP_BIN, args, {
             cwd: resolvedDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env },
+            // Run omp in its OWN process group/session so it cannot grab the
+            // backend's controlling TTY. omp (like pi) is a TUI app; even with
+            // piped stdio it opens /dev/tty directly and emits raw terminal
+            // control codes, corrupting the backend's shell into an
+            // irrecoverable raw-mode state. detached: true = new session
+            // (setsid) with no controlling terminal. Drop TTY/color env too.
+            detached: true,
+            env: {
+                ...process.env,
+                TERM: "dumb",
+                NO_COLOR: "1",
+                FORCE_COLOR: "0",
+                CLICOLOR: "0",
+                CI: "1",
+            },
         });
+        try { proc.unref(); } catch {}
         session.proc = proc;
 
         let lineBuffer = "";
         let fullText = "";
         let lastError = null;  // track turn-level errors (model failures, etc.)
+        let sawTurnEnd = false;  // did omp emit a turn_end/agent_end event?
+        let stderrBuffer = "";  // accumulate stderr for silent-failure messages
         const seenToolCalls = new Set();
 
         proc.stdout.on("data", (chunk) => {
@@ -260,6 +286,14 @@ export function createOhMyPiProvider(emit) {
                     continue;
                 }
                 if (!event || typeof event !== "object") continue;
+
+                // Track whether omp signaled turn completion. finalize() uses
+                // this to distinguish an empty-but-completed turn from a silent
+                // failure (omp quit without ever starting the model, e.g. a
+                // provider with no API key).
+                if (event.type === "turn_end" || event.type === "agent_end") {
+                    sawTurnEnd = true;
+                }
 
                 if (event.type === "session" && event.id) {
                     if (!session.ompSessionId) {
@@ -342,12 +376,17 @@ export function createOhMyPiProvider(emit) {
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
             if (!t.trim()) return;
+            // Always accumulate stderr (stripped of ANSI) so finalize() can
+            // surface it as the error message on a silent failure (no output,
+            // no turn_end) — e.g. a provider with no configured API key.
+            stderrBuffer += t.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
             const lines = t.split('\n').filter(l => l.trim());
             // oh-my-pi (like pi) writes non-error content to stderr: startup
             // banner, docs paths, ANSI escapes, Bun/Node debug traces. Emitting
             // every stderr line as {type:"error"} made the glasses flash
             // "Agent Error" briefly on every turn. Only genuine error markers
-            // are surfaced; the rest is logged for debugging.
+            // are surfaced immediately; a non-matching real error is still
+            // caught later by finalize()'s silent-failure detection.
             const isErrorLine = (l) =>
                 /^\s*error:/i.test(l) ||
                 /^\s*panic:/i.test(l) ||
@@ -388,24 +427,38 @@ export function createOhMyPiProvider(emit) {
                 clearTimeout(timer);
                 clearTimeout(resolveTimer);
                 session.busy = false;
+                // Silent-failure detection: omp may exit (code 0) producing NO
+                // assistant output and NO turn_end event (e.g. a provider with
+                // no configured API key, which omp writes to stderr and then
+                // quits). The old logic reported success-with-empty-text, so the
+                // user saw a blank turn. Surface the captured stderr as the
+                // error when there's no output and no turn_end.
+                let resolvedError = lastError;
+                let success = code === 0 && !lastError;
+                if (!fullText && !sawTurnEnd) {
+                    success = false;
+                    if (!resolvedError && stderrBuffer.trim()) {
+                        resolvedError = stderrBuffer.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
+                    }
+                    if (!resolvedError) resolvedError = "oh-my-pi produced no response";
+                    console.warn(`[oh-my-pi] silent failure [source=exit]: code=${code} stderr=${JSON.stringify(resolvedError).slice(0, 200)}`);
+                }
                 // Store error on session for status endpoint
-                if (lastError && session) session.lastError = lastError;
+                if (resolvedError && session) session.lastError = resolvedError;
                 session.proc = null;
                 safeEmit(emitId, {
                     type: "result",
-                    success: code === 0 && !lastError,
+                    success,
                     text: fullText,
                     provider: "oh-my-pi",
-                    error: lastError || undefined,
+                    error: resolvedError || undefined,
                 });
                 safeEmit(emitId, { type: "status", state: "idle" });
             };
 
             const timer = setTimeout(() => {
-                safeEmit(emitId, { type: "error", value: `oh-my-pi: prompt timed out after ${PROMPT_TIMEOUT_MS / 1000}s` });
-                try {
-                    if (session.proc && !session.proc.killed) session.proc.kill("SIGKILL");
-                } catch {}
+                safeEmit(emitId, { type: "error", value: `oh-my-pi: prompt timed out after ${PROMPT_TIMEOUT_MS / 1000}s`, source: "timeout" });
+                killProcGroup(session.proc, "SIGKILL");
                 finalize(124);
             }, PROMPT_TIMEOUT_MS);
 
@@ -578,10 +631,10 @@ export function createOhMyPiProvider(emit) {
         if (s && s.proc && !s.proc.killed) {
             const proc = s.proc;
             try {
-                proc.kill("SIGTERM");
+                killProcGroup(proc, "SIGTERM");
                 const escalation = setTimeout(() => {
                     if (proc && !proc.killed) {
-                        try { proc.kill("SIGKILL"); } catch {}
+                        killProcGroup(proc, "SIGKILL");
                     }
                 }, 2000);
                 proc.once("close", () => clearTimeout(escalation));
@@ -596,7 +649,7 @@ export function createOhMyPiProvider(emit) {
     function dispose() {
         for (const s of sessions.values()) {
             if (s?.proc && !s.proc.killed) {
-                try { s.proc.kill("SIGTERM"); } catch {}
+                killProcGroup(s.proc, "SIGTERM");
             }
             if (s) {
                 s.busy = false;

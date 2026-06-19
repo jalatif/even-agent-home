@@ -38,6 +38,16 @@ const PI_HOME = process.env.PI_HOME || join(homedir(), ".pi");
 const SESSIONS_DIR = join(PI_HOME, "agent", "sessions");
 const SESSION_CACHE_TTL_MS = 30000;
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Kill the whole pi process GROUP. pi is spawned detached (its own session) so
+// it can't grab the backend's controlling TTY; killing just the leader would
+// orphan its subprocesses (model providers etc.). Negative PID = signal the
+// whole group.
+function killProcGroup(proc, signal = "SIGTERM") {
+    if (!proc || proc.killed) return;
+    try { process.kill(-proc.pid, signal); }
+    catch { try { proc.kill(signal); } catch {} }
+}
 const MAX_HISTORY = 50;
 const MAX_PHONE_MAP_ENTRIES = 500;
 /** Resolve symlinks + macOS /private/* normalisation, matching omp's resolveEquivalentPath. */
@@ -229,13 +239,33 @@ export function createPiProvider(emit) {
         const proc = spawn(PI_BIN, args, {
             cwd: resolvedDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env },
+            // Run pi in its OWN process group/session so it cannot grab the
+            // backend's controlling TTY. pi is a TUI app; even with piped stdio
+            // it opens /dev/tty directly and emits raw terminal control codes
+            // (e.g. `ESC[99;5:1u`), which corrupted the backend's shell into an
+            // irrecoverable raw-mode state. `detached: true` puts the child in a
+            // new session (setsid) with no controlling terminal. Also drop TTY/
+            // color env so pi doesn't render color codes into its JSON stream.
+            detached: true,
+            env: {
+                ...process.env,
+                // Signal "no terminal" so pi skips TUI/color/escape init.
+                TERM: "dumb",
+                NO_COLOR: "1",
+                FORCE_COLOR: "0",
+                CLICOLOR: "0",
+                CI: "1",
+            },
         });
+        // Don't keep the backend alive waiting on the pi child group.
+        try { proc.unref(); } catch {}
         session.proc = proc;
 
         let lineBuffer = "";
         let fullText = "";
         let lastError = null;  // track turn-level errors
+        let sawTurnEnd = false;  // did pi emit a turn_end/agent_end event?
+        let stderrBuffer = "";  // accumulate stderr for silent-failure messages
         const seenToolCalls = new Set();
 
         proc.stdout.on("data", (chunk) => {
@@ -252,6 +282,14 @@ export function createPiProvider(emit) {
                     continue;
                 }
                 if (!event || typeof event !== "object") continue;
+
+                // Track whether pi signaled turn completion. Used by finalize()
+                // to distinguish a genuinely-empty-but-completed turn from a
+                // silent failure (pi quit without ever starting the model, e.g.
+                // "No API key found for minimax").
+                if (event.type === "turn_end" || event.type === "agent_end") {
+                    sawTurnEnd = true;
+                }
 
                 if (event.type === "session" && event.id) {
                     if (!session.piSessionId) {
@@ -317,8 +355,8 @@ export function createPiProvider(emit) {
                 if (event.type === "error" || event.error) {
                     const msg = event.error?.message || event.message || event.value || String(event);
                     lastError = msg;
-                    console.error(`[pi] Turn error: ${msg}`);
-                    safeEmit(emitId, { type: "error", value: msg });
+                    console.error(`[pi] Turn error [source=event]: ${msg}`);
+                    safeEmit(emitId, { type: "error", value: msg, source: "event" });
                 }
             }
         });
@@ -326,14 +364,20 @@ export function createPiProvider(emit) {
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
             if (!t.trim()) return;
+            // Always accumulate stderr (stripped of ANSI) so finalize() can
+            // surface it as the error message on a silent failure (no output,
+            // no turn_end) — e.g. "No API key found for minimax".
+            stderrBuffer += t.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
             const lines = t.split('\n').filter(l => l.trim());
             // pi writes a LOT of non-error content to stderr: its startup banner
             // (the `────` rule), docs paths (`.../docs/models.md`), and ANSI
             // escape sequences (`^[[?7u`, `^[[?62;22c`). These are NORMAL output,
             // not errors. Emitting every stderr line as `{type:"error"}` made the
             // glasses flash "Agent Error" on every turn (and, with some models,
-            // shadow the real response). Only treat stderr as an error if a line
-            // is unambiguously an error marker; otherwise just log it for debug.
+            // shadow the real response). Only treat stderr as an IMMEDIATE error
+            // if a line is unambiguously an error marker; otherwise just log it.
+            // (A non-matching real error like "No API key found" is still caught
+            // — just later, by finalize()'s silent-failure detection.)
             const isErrorLine = (l) =>
                 /^\s*error:/i.test(l) ||
                 /^\s*panic:/i.test(l) ||
@@ -342,12 +386,12 @@ export function createPiProvider(emit) {
             if (errorLine) {
                 const errMsg = errorLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
                 lastError = errMsg;
-                console.error(`[pi] stderr (error): ${errMsg}`);
-                safeEmit(emitId, { type: "error", value: errMsg });
+                console.error(`[pi] stderr [source=stderr]: ${errMsg}`);
+                safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
             } else {
                 // Non-error stderr (banner, docs path, ANSI). Log for debugging
                 // but do NOT surface to the user — it's not an error.
-                console.log(`[pi] stderr: ${lines[lines.length - 1].trim()}`);
+                console.log(`[pi] stderr (benign): ${lines[lines.length - 1].trim()}`);
             }
         });
 
@@ -376,23 +420,39 @@ export function createPiProvider(emit) {
                 clearTimeout(timer);
                 clearTimeout(resolveTimer);
                 session.busy = false;
-                if (lastError && session) session.lastError = lastError;
+                // Silent-failure detection: pi sometimes exits with code 0 but
+                // produces NO assistant output and NO turn_end event (e.g. a
+                // model with no configured API key — "No API key found for
+                // minimax" — which pi writes to stderr and then quits). The old
+                // logic treated that as success with empty text, so the user
+                // saw a blank turn. If we got no response text and no explicit
+                // turn_end, treat it as a failure and surface any captured
+                // stderr as the error message.
+                let resolvedError = lastError;
+                let success = code === 0 && !lastError;
+                if (!fullText && !sawTurnEnd) {
+                    success = false;
+                    if (!resolvedError && stderrBuffer.trim()) {
+                        resolvedError = stderrBuffer.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
+                    }
+                    if (!resolvedError) resolvedError = "pi produced no response";
+                    console.warn(`[pi] silent failure [source=exit]: code=${code} stderr=${JSON.stringify(resolvedError).slice(0, 200)}`);
+                }
+                if (resolvedError && session) session.lastError = resolvedError;
                 session.proc = null;
                 safeEmit(emitId, {
                     type: "result",
-                    success: code === 0 && !lastError,
+                    success,
                     text: fullText,
                     provider: "pi",
-                    error: lastError || undefined,
+                    error: resolvedError || undefined,
                 });
                 safeEmit(emitId, { type: "status", state: "idle" });
             };
 
             const timer = setTimeout(() => {
-                safeEmit(emitId, { type: "error", value: `pi: prompt timed out after ${PROMPT_TIMEOUT_MS / 1000}s` });
-                try {
-                    if (session.proc && !session.proc.killed) session.proc.kill("SIGKILL");
-                } catch {}
+                safeEmit(emitId, { type: "error", value: `pi: prompt timed out after ${PROMPT_TIMEOUT_MS / 1000}s`, source: "timeout" });
+                killProcGroup(session.proc, "SIGKILL");
                 finalize(124);
             }, PROMPT_TIMEOUT_MS);
 
@@ -535,10 +595,10 @@ export function createPiProvider(emit) {
         if (s && s.proc && !s.proc.killed) {
             const proc = s.proc;
             try {
-                proc.kill("SIGTERM");
+                killProcGroup(proc, "SIGTERM");
                 const escalation = setTimeout(() => {
                     if (proc && !proc.killed) {
-                        try { proc.kill("SIGKILL"); } catch {}
+                        killProcGroup(proc, "SIGKILL");
                     }
                 }, 2000);
                 proc.once("close", () => clearTimeout(escalation));
@@ -553,7 +613,7 @@ export function createPiProvider(emit) {
     function dispose() {
         for (const s of sessions.values()) {
             if (s?.proc && !s.proc.killed) {
-                try { s.proc.kill("SIGTERM"); } catch {}
+                killProcGroup(s.proc, "SIGTERM");
             }
             if (s) {
                 s.busy = false;
