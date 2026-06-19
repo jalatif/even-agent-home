@@ -54,3 +54,25 @@ Run tests locally without hardware:
 ```bash
 npm run test:simulator --prefix web
 ```
+
+## Provider / Polling Regression Tests
+
+The simulator harness validates glasses layout and state-machine transitions,
+but provider lifecycle bugs also need backend-integrated tests:
+
+```bash
+npm run build --prefix web
+npm run test:unit --prefix web
+node scripts/test_models_harness.js
+node scripts/test-polling-controller.mjs
+```
+
+- `test_models_harness.js` protects the static model fallback tables from
+  guessed or misspelled provider model IDs.
+- `test-polling-controller.mjs` exercises the real backend send -> status/history
+  polling sequence. It must continue to pass when status turns idle before
+  history catches up; that race is normal and must not produce a transient
+  glasses `Agent Error`.
+- A focused provider probe should be used when changing `pi` model handling:
+  selected aliases like `minimax-m3` must be normalized to provider-qualified
+  values from `~/.pi/agent/models.json` before spawning `pi`.

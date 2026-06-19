@@ -174,14 +174,8 @@ export class AgentHomeController {
                  // Keep local messages, only update thinking + error
                  const thinkingChanged = this.state.isThinking !== isThinking;
                  const errorChanged = this.state.agentError !== pollError;
-                 // If thinking just cleared but we have no real error, check for failure
-                 let resolvedError = pollError;
-                 if (!resolvedError && thinkingChanged && !isThinking) {
-                   const lastLocal = this.state.messages[this.state.messages.length - 1];
-                   if (lastLocal?.role === 'user') resolvedError = 'No response from agent';
-                 }
-                 if (thinkingChanged || errorChanged || resolvedError !== pollError) {
-                   this.setState({ ...this.state, isThinking, agentError: resolvedError || pollError }, { renderBridge: true, partialRender: true })
+                 if (thinkingChanged || errorChanged) {
+                   this.setState({ ...this.state, isThinking, agentError: pollError }, { renderBridge: true, partialRender: true })
                  }
                  continue;
                }

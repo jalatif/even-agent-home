@@ -24,8 +24,26 @@ Both test harnesses will track and assert against strict performance budgets for
 - **Native Render Payload Construction:** < 50ms
 - **Backend Fetch Times:** < 300ms for routine session/model lookups.
 
+### D. Provider Lifecycle Regression Testing
+Provider integrations need targeted backend tests in addition to simulator
+navigation:
+- `scripts/test-polling-controller.mjs` validates real `/api/prompt` ->
+  `/api/status` + `/api/history` polling behavior and guards the "idle before
+  history caught up" race from becoming a false `Agent Error`.
+- `scripts/test-provider-contracts.mjs` validates prompt/session/status/history
+  contracts across providers when local credentials and binaries are available.
+- `scripts/test_models_harness.js` validates static model fallbacks against the
+  recorded source-of-truth model dump.
+- For `pi`, add or run a focused spawn-argument probe when changing model
+  selection; unqualified saved aliases must resolve through
+  `~/.pi/agent/models.json`.
+
 ## 3. Execution Strategy
 1. **App Polish:** ✅ Address any remaining production quality improvements in `web/src/` (e.g., UI layout fixes, scroll physics, removing duplicated imports).
 2. **Implement Fuzzer:** ✅ Build `scripts/fuzzy-test.mjs` ported from `even-telegram` but adapted to `even-agent-home`'s `AppState` constraints and invariants (including `scrollOffset` and `available` agent payload structures).
 3. **Execute Harnesses:** ✅ Run `npm run test:simulator` explicitly verifying 0 structural failures.
-4. **Resolution:** ✅ Address any bugs uncovered during fuzzy/flow execution (e.g. backend crash on multiple `execSync` imports, UI bug with flexbox constraints) and ensure tests pass stably.
+4. **Provider Regression Pass:** ✅ For provider/model/polling changes, run
+   `npm run build --prefix web`, `npm run test:unit --prefix web`,
+   `node scripts/test_models_harness.js`, and
+   `node scripts/test-polling-controller.mjs`.
+5. **Resolution:** ✅ Address any bugs uncovered during fuzzy/flow/provider execution (e.g. backend crash on multiple `execSync` imports, UI bug with flexbox constraints, false transient `Agent Error`, stale saved model IDs) and ensure tests pass stably.

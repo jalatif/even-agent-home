@@ -14,3 +14,14 @@
   double tap on sessions screen should take back to selection of agent screen. Double tap on agent screen or inital pairing screen should toggle glasses screen on or off. Create a
   detailed architecture doc in docs/ folder as well as execution prd doc along with UI invariants doc that need to be fully validated and detailed testing harness doc that will
   cover all the functionalities i described. Ask any questions for clarification if needed or for any important decision making
+
+## Current-state note (2026-06-19)
+
+This file preserves the original product prompt. Current implementation differs
+from the original ask in two intentional ways:
+
+- QR/camera scan is not supported because Even Hub plugin WebViews do not expose
+  phone camera capture APIs. Pairing is via Backend URL + Secure Token; pasting
+  a full backend `?token=` Connect URL auto-splits the fields.
+- STT provider override is backend-only. The frontend always sends PCM to
+  `/api/transcribe`; provider URL/key selection stays server-side.

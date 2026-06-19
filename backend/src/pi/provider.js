@@ -36,6 +36,7 @@ import { debugLog } from "../debug.js";
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_HOME = process.env.PI_HOME || join(homedir(), ".pi");
 const SESSIONS_DIR = join(PI_HOME, "agent", "sessions");
+const MODELS_JSON = join(PI_HOME, "agent", "models.json");
 const SESSION_CACHE_TTL_MS = 30000;
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -172,6 +173,38 @@ function setBoundedMapping(map, key, value) {
     }
 }
 
+let customModelAliases = null;
+let customModelAliasesMtimeMs = 0;
+function getCustomModelAliases() {
+    let mtimeMs = 0;
+    try {
+        mtimeMs = existsSync(MODELS_JSON) ? statSync(MODELS_JSON).mtimeMs : 0;
+        if (customModelAliases && customModelAliasesMtimeMs === mtimeMs) return customModelAliases;
+        customModelAliasesMtimeMs = mtimeMs;
+        customModelAliases = new Map();
+        if (!mtimeMs) return customModelAliases;
+        const parsed = JSON.parse(readFileSync(MODELS_JSON, "utf8"));
+        for (const [provider, providerConfig] of Object.entries(parsed.providers || {})) {
+            const models = Array.isArray(providerConfig?.models) ? providerConfig.models : [];
+            for (const modelDef of models) {
+                if (!modelDef || typeof modelDef.id !== "string") continue;
+                const qualified = `${provider}/${modelDef.id}`;
+                customModelAliases.set(modelDef.id, qualified);
+                if (typeof modelDef.name === "string") customModelAliases.set(modelDef.name, qualified);
+            }
+        }
+    } catch (err) {
+        customModelAliases = customModelAliases || new Map();
+        console.warn(`[pi] failed to read custom model aliases: ${err.message}`);
+    }
+    return customModelAliases;
+}
+
+function normalizeModel(model) {
+    if (!model || model.includes("/")) return model;
+    return getCustomModelAliases().get(model) || model;
+}
+
 export function createPiProvider(emit) {
     const sessions = new Map();
     const phoneToPi = new Map();
@@ -186,16 +219,17 @@ export function createPiProvider(emit) {
     }
 
     function buildArgs(text, piSessionId, model, thinking) {
+        const resolvedModel = normalizeModel(model);
         const args = [
             "-p",
             "--mode", "json",
             "--no-extensions",
             "--no-skills",
         ];
-        if (model) {
-            args.push("--model", model);
+        if (resolvedModel) {
+            args.push("--model", resolvedModel);
         } else if (process.env.PI_MODEL) {
-            args.push("--model", process.env.PI_MODEL);
+            args.push("--model", normalizeModel(process.env.PI_MODEL));
         }
         if (thinking && thinking !== "off") {
             args.push("--thinking", thinking);
@@ -219,6 +253,7 @@ export function createPiProvider(emit) {
             existing || { id: null, busy: true, cwd: resolvedDir, proc: null, piSessionId: null };
         session.busy = true;
         session.cwd = resolvedDir;
+        session.lastError = undefined;
         // When resuming an external session, use the frontend-provided session ID
         if (!existing && phoneSessionId && !session.piSessionId) {
             session.piSessionId = phoneSessionId;
@@ -438,7 +473,10 @@ export function createPiProvider(emit) {
                     if (!resolvedError) resolvedError = "pi produced no response";
                     console.warn(`[pi] silent failure [source=exit]: code=${code} stderr=${JSON.stringify(resolvedError).slice(0, 200)}`);
                 }
-                if (resolvedError && session) session.lastError = resolvedError;
+                if (session) {
+                    if (resolvedError) session.lastError = resolvedError;
+                    else session.lastError = undefined;
+                }
                 session.proc = null;
                 safeEmit(emitId, {
                     type: "result",

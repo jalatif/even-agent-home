@@ -222,6 +222,7 @@ export function createOhMyPiProvider(emit) {
             existing || { id: null, busy: true, cwd: resolvedDir, proc: null, ompSessionId: null, partialText: "" };
         session.busy = true;
         session.cwd = resolvedDir;
+        session.lastError = undefined;
         // When resuming an external session (not in memory), use the frontend-provided
         // session ID as the omp session ID so --resume works.
         if (!existing && phoneSessionId && !session.ompSessionId) {
@@ -443,8 +444,13 @@ export function createOhMyPiProvider(emit) {
                     if (!resolvedError) resolvedError = "oh-my-pi produced no response";
                     console.warn(`[oh-my-pi] silent failure [source=exit]: code=${code} stderr=${JSON.stringify(resolvedError).slice(0, 200)}`);
                 }
-                // Store error on session for status endpoint
-                if (resolvedError && session) session.lastError = resolvedError;
+                // Store error on session for status endpoint, but clear stale
+                // errors after a successful later turn so the glasses do not
+                // flash an old "Agent Error" while the next response arrives.
+                if (session) {
+                    if (resolvedError) session.lastError = resolvedError;
+                    else session.lastError = undefined;
+                }
                 session.proc = null;
                 safeEmit(emitId, {
                     type: "result",

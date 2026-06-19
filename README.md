@@ -25,21 +25,19 @@ even-agent-home --token my-secret --port 3456
 ```
 
 The CLI prints a banner with a `Connect URL` like
-`http://192.168.6.11:3456?token=...` and a QR code. Pick whichever is more
-convenient for step 2.
+`http://192.168.6.11:3456?token=...`.
 
 ### 2. Connect from the glasses app
 
 Sideload `app.json` to your G2 (see [Even Hub docs](https://docs.evenrealities.com))
-to install the Agent Home client. Open the app, go to **Settings** →
-**Quick Connect**:
+to install the Agent Home client. Open the app, go to **Settings** and paste the
+full `Connect URL` into the Backend URL field. The settings UI auto-splits it
+into `baseUrl` + `token`.
 
-- **Camera available**: scan the QR code shown by the bridge.
-- **No camera**: paste the `Connect URL` directly into the Backend URL field.
-  The settings UI auto-splits it into `baseUrl` + `token`.
-
-The settings are persisted in local storage, so a restart of the app does
-not require re-entering the URL or token.
+The settings are persisted through the Even Hub bridge storage API, so a restart
+of the app does not require re-entering the URL or token. QR scanning is not part
+of the current app because Even Hub plugin WebViews do not expose the phone
+camera to `getUserMedia`.
 
 See [`backend/README.md`](./backend/README.md) for the full bridge
 documentation (env vars, API surface, supported agents, encryption wire

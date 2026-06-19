@@ -8,10 +8,11 @@ AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connec
 ### 1. Setup & Pairing
 - **Phone UI**:
   - Input for Backend URL/Port.
-  - Input for Secure Token (Shared Secret) or QR Code scanner for auto-configuration.
-  - Input for optional STT Server URL override.
+  - Input for Secure Token (Shared Secret). Pasting a full backend `?token=` Connect URL into the Backend URL field auto-splits URL and token.
+  - No QR scanner in the current client: Even Hub plugin WebViews do not expose phone camera capture.
+  - STT provider selection is backend-only. The frontend always sends audio to `/api/transcribe`.
   - Toggles to enable/disable specific agents (agents not available locally are grayed out and disabled).
-  - Dropdown lists to select the active model for each enabled agent (data sourced from backend).
+  - Dropdown lists to select the active model for each enabled agent (data sourced from backend). Claude defaults to `claude-opus-4-8`; stale saved Claude model IDs that are no longer in the live model list reset to that default.
   - UI styled in dark-mode glassmorphism to match the aesthetic.
 
 ### 2. Agent Selection (Glasses)
@@ -40,6 +41,8 @@ AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connec
 
 ## Backend Requirements
 - **Single Service**: Must handle all providers (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes) simultaneously.
+- **Model Normalization**: Provider adapters must handle backwards-compatible saved model IDs. `pi` normalizes unqualified custom model aliases through `~/.pi/agent/models.json` before invoking the CLI.
+- **Error Semantics**: Provider errors must surface through `/api/status.error`, but stale errors must clear after successful later turns. The frontend must not show `Agent Error` for ordinary history-catch-up races.
 - **API Endpoints**:
   - `GET /api/agents`: Returns list of available agents and their models.
   - `GET /api/sessions?agent={agent}`: Returns non-empty sessions.

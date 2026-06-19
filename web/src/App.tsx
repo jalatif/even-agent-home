@@ -21,11 +21,11 @@ function formatModelName(m: string): string {
   // Modern claude model names (claude-opus-4-5, claude-sonnet-4-6, …) — handle
   // via the generic regex below rather than hardcoding each dated variant.
   if (m.startsWith('claude-')) {
-    const match = m.match(/^claude-(\d+)(?:-(\d+))?-(opus|sonnet|haiku)(?:-.*)?$/i);
+    const match = m.match(/^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?(?:-.*)?$/i);
     if (match) {
-      const major = match[1];
-      const minor = match[2];
-      const type = match[3].charAt(0).toUpperCase() + match[3].slice(1);
+      const type = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+      const major = match[2];
+      const minor = match[3];
       return `${type} ${major}${minor ? `.${minor}` : ''}`;
     }
   }
@@ -53,6 +53,7 @@ const PREFERRED_DEFAULT_MODEL: Record<string, string> = {
 
 function defaultModelFor(agent: string, models: string[]): string {
   const preferred = PREFERRED_DEFAULT_MODEL[agent]
+  if (preferred && models.length === 0) return preferred
   if (preferred && models.includes(preferred)) return preferred
   // Fallback heuristics when the exact preferred model isn't in the list, so we
   // still pick the flagship rather than blindly taking models[0] (which is
@@ -80,6 +81,13 @@ function defaultModelFor(agent: string, models: string[]): string {
     if (base) return base
   }
   return models[0] || 'default'
+}
+
+function selectedModelFor(agent: string, savedModel: string | undefined, models: string[]): string {
+  if (agent === 'claude' && savedModel && models.length > 0 && !models.includes(savedModel)) {
+    return defaultModelFor(agent, models)
+  }
+  return savedModel || defaultModelFor(agent, models)
 }
 
 /** Compare two claude/gpt model ids by version, highest first. */
@@ -306,18 +314,20 @@ export default function App() {
             if (picked !== 'default') {
               newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
             }
+          } else if (agent.id === 'claude' && result.models.length > 0 && !result.models.includes(newConfigs[agent.id].model)) {
+            const picked = defaultModelFor(agent.id, result.models)
+            if (picked !== 'default' && picked !== newConfigs[agent.id].model) {
+              newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
+            }
           } else if (agent.id === 'codex' && /-pro$/.test(newConfigs[agent.id].model)) {
             // Codex -pro variants (gpt-5.5-pro, …) are rejected when using Codex
-            // with a ChatGPT account (400 "not supported"). We don't auto-strip
-            // every saved -pro (an API-account user may legitimately want one),
-            // but we DO surface the issue: if the saved -pro model is NOT in the
-            // live list returned by this codex install, it can't work here, so
-            // fall back to the non-pro default (gpt-5.5).
-            if (!result.models.includes(newConfigs[agent.id].model)) {
-              const picked = defaultModelFor(agent.id, result.models)
-              if (picked !== 'default' && picked !== newConfigs[agent.id].model) {
-                newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
-              }
+            // with a ChatGPT account (400 "not supported"). The default selection
+            // MUST be the non-pro base model (gpt-5.5). Reset a saved -pro choice
+            // to the base default so the first turn doesn't fail — a user who
+            // genuinely wants -pro (API account) can re-select it from the list.
+            const picked = defaultModelFor(agent.id, result.models)
+            if (picked !== 'default' && picked !== newConfigs[agent.id].model) {
+              newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
             }
           }
           if ((result.status === 'refreshing' || result.models.length === 0) && result.available !== false) {
@@ -366,7 +376,7 @@ export default function App() {
 
   const toggleAgent = (agent: string) => {
     setAgentConfigs(prev => {
-      const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
+      const current = prev[agent] ?? { enabled: true, model: defaultModelFor(agent, modelsByAgent[agent] || []) }
       const next = { ...prev, [agent]: { ...current, enabled: !current.enabled } }
       void saveAgentConfigs(next)
       return next
@@ -384,7 +394,7 @@ export default function App() {
 
   const changeAgentThinking = (agent: string, thinking: string) => {
     setAgentConfigs(prev => {
-      const current = prev[agent] ?? { enabled: true, model: modelsByAgent[agent]?.[0] || 'default' }
+      const current = prev[agent] ?? { enabled: true, model: defaultModelFor(agent, modelsByAgent[agent] || []) }
       const next = { ...prev, [agent]: { ...current, thinking } }
       void saveAgentConfigs(next)
       return next
@@ -740,7 +750,13 @@ export default function App() {
             <section className="card config-card">
               <h2>Agent Configuration</h2>
               <div className="agent-list">
-                {agents.map(agent => (
+                {agents.map(agent => {
+                  const modelOptions = modelsByAgent[agent.id] || []
+                  const selectedModel = selectedModelFor(agent.id, agentConfigs[agent.id]?.model, modelOptions)
+                  const renderedModelOptions = selectedModel && selectedModel !== 'default' && !modelOptions.includes(selectedModel)
+                    ? [selectedModel, ...modelOptions]
+                    : modelOptions
+                  return (
                   <div key={agent.id} className="agent-row" style={{ display: 'flex', flexDirection: 'column', padding: '15px', background: 'rgba(30, 41, 59, 0.5)', borderRadius: '8px', marginBottom: '10px', border: '1px solid var(--border-light)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: '600', fontSize: '1.1rem', textTransform: 'capitalize', color: 'var(--text-main)' }}>{agent.id}</span>
@@ -768,13 +784,13 @@ export default function App() {
                         <div style={{ flex: 1 }}>
                           <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '5px' }}>Model</label>
                           <select 
-                            value={agentConfigs[agent.id]?.model ?? ''} 
+                            value={selectedModel} 
                             onChange={e => changeAgentModel(agent.id, e.target.value)}
                             disabled={!agent.available || !(agentConfigs[agent.id]?.enabled ?? true)}
                             style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-light)', color: 'var(--text-main)', background: 'rgba(15, 23, 42, 0.8)' }}
                           >
                             {agent.id === 'claude' && <option value="">Default</option>}
-                            {(modelsByAgent[agent.id] || []).map(m => <option key={m} value={m}>{formatModelName(m)}</option>)}
+                            {renderedModelOptions.map(m => <option key={m} value={m}>{formatModelName(m)}</option>)}
                           </select>
                         </div>
                         <div style={{ flex: 1 }}>
@@ -795,7 +811,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                ))}
+                )})}
               </div>
             </section>
 

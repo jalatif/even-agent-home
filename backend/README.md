@@ -42,7 +42,13 @@ On first start (and on every start where `--token` is not passed) the server gen
 Connect URL: http://192.168.6.11:3456?token=abc123...
 ```
 
-Paste that URL (or scan the QR code printed alongside it) into the Agent Home glasses client → Settings → Quick Connect. The token is required for every API request and is the only credential the bridge uses.
+Paste that URL into the Agent Home glasses client → Settings. The settings UI
+auto-splits full `?token=` URLs into Backend URL + Secure Token. The token is
+required for every API request and is the only credential the bridge uses.
+
+The banner still prints a QR code for terminal convenience, but the current
+Even Hub WebView client does not scan it: phone camera access is not exposed to
+plugin WebViews.
 
 > **Note:** the auth token is **only** accepted via the `--token` CLI flag (or generated for you). The legacy `BRIDGE_TOKEN` environment variable is no longer supported and will produce a deprecation warning if set.
 
@@ -115,11 +121,23 @@ POST `/api/prompt`:
   "provider": "claude",
   "sessionId": "<id or omit to start new>",
   "text": "Summarize this conversation",
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "thinking": "low",
   "yolo": false
 }
 ```
+
+### Model-selection notes
+
+- `pi` accepts the model selected by the client, but the provider normalizes
+  unqualified model aliases through `~/.pi/agent/models.json` before spawning
+  the CLI. For example, a saved/client value of `minimax-m3` is launched as the
+  configured provider-qualified id such as `litellm/minimax-m3`. This prevents
+  pi from accidentally resolving a custom LiteLLM model to a built-in provider
+  with different credentials.
+- `oh-my-pi` and `pi` clear stale per-session errors at the start/end of later
+  successful turns, so `/api/status` does not keep reporting an old provider
+  failure after the next response succeeds.
 
 ## Encryption
 

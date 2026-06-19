@@ -47,7 +47,7 @@
 - **Status:** Resolved in current working tree; key rotation remains operational follow-up if the removed key was real.
 - **Issue:** `claudely` contains a hardcoded API-key fallback, frontend defaults to a static token, saved QR config is overwritten back to localhost/default token, and backend accepts query tokens while logging full URLs.
 - **Files:** `backend/src/claudely/provider.js`, `web/src/api.ts`, `backend/src/index.js`, `backend/src/startup/common.js`.
-- **Resolution:** Removed Claudely hardcoded key fallbacks, removed the frontend default token, preserved saved/scanned config, redacted token parameters from request logs and visible pairing URLs, and made query-token API auth require `ALLOW_QUERY_TOKEN=1`. Additionally: API key `sk-N_y99Po69M7ayIkFHgFQUEgnyKuuQOWI8XiXTaDKhtM` was scrubbed from all git history via `git filter-branch` (commits rewritten — see `b9620c8`).
+- **Resolution:** Removed Claudely hardcoded key fallbacks, removed the frontend default token, preserved saved/scanned config, redacted token parameters from request logs and visible pairing URLs, and made query-token API auth require `ALLOW_QUERY_TOKEN=1`. Additionally: the leaked API-key literal was scrubbed from all git history via `git filter-branch` (commits rewritten — see `b9620c8`).
 - **Verification:** Run `npm run build --prefix web` and confirm no hardcoded Claudely key remains with `rg`.
 
 ### 6.4 Backend Error Semantics
@@ -190,7 +190,7 @@
 ### 11.2 configFromLocation Vite Port Check [Resolved]
 - **Severity:** Was Low.
 - **Issue:** `web/src/api.ts` checked `window.location.port === '5173'` to pick the dev backend URL, but Vite is configured for `port: 5175`. The check never matched, so the dev token URL fell through to `sameOriginBaseUrl = http://localhost:5175/api` which doesn't exist.
-- **Resolution:** The whole `sameOriginBaseUrl` auto-fill was removed (deep review, 2026-06-18). `baseUrl` now defaults to `''` so the settings input shows its placeholder hint and the app shows its "please configure" empty state until the user scans a QR / enters a URL. The stale `5173` check is gone with it. Users connect via QR/Connect-URL anyway, so the hint is clearer than a wrong guess; deep-link `?baseUrl=` and saved configs still win over the empty default.
+- **Resolution:** The whole `sameOriginBaseUrl` auto-fill was removed (deep review, 2026-06-18). `baseUrl` now defaults to `''` so the settings input shows its placeholder hint and the app shows its "please configure" empty state until the user enters a Connect URL. The stale `5173` check is gone with it. Users connect via Backend URL/Secure Token fields; deep-link `?baseUrl=` and saved configs still win over the empty default.
 
 ### 11.3 Fuzzy Test Vite Strict Port [Flakiness]
 - **Severity:** Low.
@@ -331,3 +331,36 @@ Redesigned STT so the provider is selected **server-side**, with all API keys ke
 ### 14.4 QR scan flow removed [Resolved]
 Removed the entire QR-scan flow (camera path was a dead end on Even Hub — the host does not expose the phone camera to plugin WebViews). Connection is now exclusively via Backend URL + Secure Token. Uninstalled `html5-qrcode` (dropped the 368KB `qr-vendor` bundle), removed the `camera` permission from `app.json`. See §13.2.
 - **Files:** `web/src/QRScanner.tsx` (deleted), `web/src/App.tsx`, `web/package.json`, `app.json`.
+
+## 15. Pi/OMP Integration + Claude Model Defaults (2026-06-19)
+
+### 15.1 Pi selected models failed with `No API key found for opencode-go` [Resolved]
+- **Severity:** High for the `pi` integration.
+- **Symptom:** Selecting `pi` with `minimax-m3`, GLM, or similar custom models from the Agent Home settings caused `Agent Error`. Backend logs showed `No API key found for opencode-go`, even though the same model worked in interactive `pi` after selecting it with `/model`.
+- **Root cause:** The frontend sent unqualified model IDs like `minimax-m3`. In non-interactive CLI mode, `pi --model minimax-m3` could resolve to a built-in provider (`opencode-go`) instead of the locally configured custom LiteLLM provider. Interactive `/model` was using the local configuration context, so it did not hit the same provider-auth path.
+- **Resolution:** `backend/src/pi/provider.js` now reads `~/.pi/agent/models.json`, caches alias mappings by file mtime, and normalizes unqualified selected model names to provider-qualified IDs before spawning `pi` (for example, `minimax-m3` -> `litellm/minimax-m3`). Already-qualified model strings are passed through unchanged.
+- **Verification:** `node --check backend/src/pi/provider.js`; focused fake-`pi` spawn-argument probe confirmed `--model litellm/minimax-m3`; `node scripts/test_models_harness.js`; `npm run build --prefix web`; `npm run test:unit --prefix web`.
+
+### 15.2 Oh-my-pi briefly flashed `Agent Error` before showing a valid response [Resolved]
+- **Severity:** Low/Medium UX issue.
+- **Symptom:** `oh-my-pi` generated a response, but the glasses footer briefly showed `Agent Error` before the reply appeared.
+- **Root causes:**
+  1. `oh-my-pi`/`pi` stored `lastError` on session status and did not clear stale errors at the start/end of successful later turns.
+  2. The frontend polling never-shrink guard synthesized `No response from agent` when status flipped idle while backend history still had fewer messages than the optimistic local message list. That idle-before-history race is normal for jsonl-backed providers.
+- **Resolution:** `backend/src/oh-my-pi/provider.js` and `backend/src/pi/provider.js` clear stale `lastError` at prompt start and after successful finalization. `web/src/controller/agentHomeController.ts` now preserves local messages and updates `isThinking`/real provider errors only; it no longer invents `No response from agent` during history catch-up.
+- **Verification:** `node --check backend/src/oh-my-pi/provider.js`; `node --check backend/src/pi/provider.js`; `node scripts/test-polling-controller.mjs` (with localhost approval) passed and explicitly exercised the idle/history-empty case without producing a false error.
+
+### 15.3 Claude model dropdown kept showing stale/default selections [Resolved]
+- **Severity:** Medium settings UX issue.
+- **Symptoms:** First connection showed `Default` instead of Claude Opus 4.8. After forcing a fallback, the dropdown showed an older saved `Claude 3 Opus 20240229` value.
+- **Root causes:** The settings `<select>` rendered before async model config caught up and used the empty `Default` option when the selected value was not present in the option list. Separately, persisted `agentConfigs.claude.model` could contain an old model ID no longer returned by the backend, and the UI treated it as an explicit valid choice.
+- **Resolution:** `web/src/App.tsx` now:
+  - defaults Claude to `claude-opus-4-8` even before the model list loads,
+  - injects the selected fallback option into the native `<select>` so the browser cannot visually fall back to `Default`,
+  - treats saved Claude model IDs absent from the live list as stale and resets them to `claude-opus-4-8`,
+  - formats current Claude IDs correctly (`claude-opus-4-8` -> `Opus 4.8`).
+- **Verification:** `npm run build --prefix web`; `npm run test:unit --prefix web`.
+
+### 15.4 Documentation updated for current state [Resolved]
+- **Resolution:** Updated root/backend/web READMEs, architecture, execution PRD, UI invariants, testing plan/harness docs, and project learnings to reflect: no QR/camera scan flow, bridge KV persistence, server-side STT provider selection, Pi model alias normalization, stale Claude default repair, and false-error polling rules.
+- **Verification:** Markdown-only change; source verification for the implementation remains the commands listed in 15.1-15.3.
