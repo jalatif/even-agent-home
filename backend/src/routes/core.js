@@ -224,9 +224,18 @@ async function refreshModels(provider, { force = false } = {}) {
             if (models.length > 0) {
                 cached.models = models;
                 cached.source = "refreshed";
-            } else if ((cached.models?.length ?? 0) === 0) {
-                cached.models = DEFAULT_MODELS[provider] ?? [];
-                cached.source = cached.models.length > 0 ? "static" : "empty";
+            } else {
+                // The CLI ran and returned, but yielded 0 parseable models.
+                // This is NOT a failure of the binary — it means the agent's
+                // current config exposes no models (or its output format is
+                // not recognized by our parser). Showing the hardcoded
+                // DEFAULT_MODELS here would display models from the DEV
+                // machine on every other machine (the "PI shows cached models
+                // from another machine" bug). Treat 0 models as the real
+                // answer: clear the list so the user sees an honest empty
+                // state instead of stale fabricated models.
+                cached.models = [];
+                cached.source = "empty";
             }
             cached.status = "complete";
             cached.error = null;
@@ -234,11 +243,16 @@ async function refreshModels(provider, { force = false } = {}) {
             return cached;
         })
         .catch((error) => {
-            if ((cached.models?.length ?? 0) === 0) {
-                cached.models = DEFAULT_MODELS[provider] ?? [];
-                cached.source = cached.models.length > 0 ? "static" : "empty";
-            }
-            cached.status = cached.models.length > 0 ? "complete" : "error";
+            // The CLI errored (crashed, timed out, or exited non-zero). We do
+            // NOT fall back to the hardcoded DEFAULT_MODELS here — that would
+            // show the dev machine's model list on every other machine (the
+            // "PI shows cached models from another machine" bug). Instead keep
+            // whatever the last successful refresh produced (could be the
+            // initial static seed on the very first run) and mark the status
+            // as 'error' so the UI can surface that the list may be stale.
+            // A re-fetch attempt will replace it once the CLI succeeds.
+            cached.status = (cached.models?.length ?? 0) > 0 ? "complete" : "error";
+            cached.source = (cached.models?.length ?? 0) > 0 ? cached.source : "empty";
             cached.error = error?.message ?? String(error);
             cached.refreshedAt = new Date().toISOString();
             return cached;

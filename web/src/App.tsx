@@ -160,6 +160,14 @@ export default function App() {
       // `configHydrated`/`agentConfigsHydrated` flags from the localStorage
       // fallback — without force, the second call would short-circuit and
       // never consult the bridge KV store, locking in stale defaults.
+      //
+      // CRITICAL ordering: the initial `ctrl.boot()` (which fetches the agent
+      // list via `getApi()` → `currentConfig`) must run AFTER this re-hydration
+      // completes, not concurrently. If boot() reads the config before the
+      // bridge KV store is consulted, it sees the empty pre-bridge defaults
+      // (no baseUrl/token), `getAgents()` fails, and the app shows "No agents
+      // found / Configure backend" even though valid settings ARE persisted.
+      // That was the "have to click Save to reload agents" bug.
       void (async () => {
         const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
           hydrateApiConfig(true),
@@ -168,14 +176,16 @@ export default function App() {
         if (unmounted) return
         setConfig(hydratedConfig)
         setAgentConfigs(hydratedAgentConfigs)
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(ctrl as any).bridge = bridge
+        setController(ctrl)
+
+        ctrl.subscribe(setScreenState)
+        // Boot now reads the fully-hydrated config (baseUrl + token restored
+        // from the bridge KV store), so agents load automatically on startup.
+        ctrl.boot()
       })()
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(ctrl as any).bridge = bridge
-      setController(ctrl)
-
-      ctrl.subscribe(setScreenState)
-      ctrl.boot()
     })
 
     return () => { unmounted = true }

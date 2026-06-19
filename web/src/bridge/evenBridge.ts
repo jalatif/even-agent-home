@@ -242,10 +242,24 @@ export class EvenHubGlassesBridge implements GlassesBridge {
     // allSettled keeps the flush moving even if one region rejects; failures
     // are still surfaced to the caller via the .finally counters below.
     if (updates.length > 0) {
-      // Hoist the narrowed method into a const so TS keeps the non-undefined
-      // narrowing inside the map callback (the `typeof ... !== 'function'`
-      // guard above does not survive into the arrow's closure otherwise).
-      const upgrade = this.sdk.textContainerUpgrade
+      // Dispatch every container update concurrently. Each `textContainerUpgrade`
+      // is an independent region (title/sidebar/panel-body/panel-box/footer) and
+      // a firmware round-trip on real G2 hardware (~50–200ms each). Awaiting them
+      // serially made a single partial render take up to N×latency — the cause of
+      // the ~1s UP/DOWN/CLICK lag. Running them in parallel collapses a full
+      // panel update to a single round-trip (bounded by the slowest update).
+      //
+      // CRITICAL: bind the SDK method. Hoisting it off the object
+      // (`const upgrade = this.sdk.textContainerUpgrade`) detaches `this` — the
+      // SDK method then rejects with "Cannot read properties of undefined",
+      // Promise.allSettled silently swallows it, and NO update reaches the
+      // glasses (pointer frozen, messages never appear). `.bind(this.sdk)`
+      // preserves the receiver; this is the same unbound-method footgun as the
+      // storage getLocalStorage fix (Issue 1). We use an arrow that reads
+      // `this.sdk` directly so `this` (the bridge) is correct AND the inner
+      // `.textContainerUpgrade(update)` call keeps the SDK as its receiver.
+      const sdk = this.sdk
+      const upgrade = sdk.textContainerUpgrade!.bind(sdk)
       await Promise.allSettled(updates.map((update) => withTimeout(upgrade(update), 1000, 'textContainerUpgrade')))
     }
     this.lastSidebarModel = model

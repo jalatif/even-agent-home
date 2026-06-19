@@ -53,46 +53,51 @@ function makeFakeSdk(opts: FakeSdkOptions = {}) {
 
   const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
-  const record = (method: string, args: unknown) => {
-    calls.push({ method, args })
-  }
-
-  const sdk = {
-    calls,
-    storage,
+  // IMPORTANT: the methods below reference `this.calls` (NOT the closure `calls`)
+  // deliberately. This mirrors the real Even Hub SDK, whose methods need their
+  // receiver. If the bridge ever hoists a method off the object and calls it
+  // unbound (the Issue-1/Issue-5 unbound-method footgun), `this` is undefined
+  // and the call throws "Cannot read properties of undefined (reading 'calls')" —
+  // which Promise.allSettled would silently swallow. The regression test below
+  // ("textContainerUpgrade actually completes, not silently rejected") catches
+  // exactly that, by checking the call was recorded.
+  class FakeSdk {
+    calls = calls
+    storage = storage
     async createStartUpPageContainer(container: unknown) {
-      record('createStartUpPageContainer', container)
+      this.calls.push({ method: 'createStartUpPageContainer', args: container })
       if (latency) await sleep(latency)
       return true
-    },
+    }
     async rebuildPageContainer(container: unknown) {
-      record('rebuildPageContainer', container)
+      this.calls.push({ method: 'rebuildPageContainer', args: container })
       if (latency) await sleep(latency)
       return true
-    },
+    }
     async textContainerUpgrade(update: TextContainerUpgrade) {
-      record('textContainerUpgrade', update)
+      this.calls.push({ method: 'textContainerUpgrade', args: update })
       if (latency) await sleep(latency)
       return true
-    },
-    async audioControl(_enabled: boolean) {
-      record('audioControl', _enabled)
+    }
+    async audioControl(enabled: boolean) {
+      this.calls.push({ method: 'audioControl', args: enabled })
       return true
-    },
+    }
     async getLocalStorage(key: string) {
-      record('getLocalStorage', key)
-      return storage.get(key) ?? ''
-    },
+      this.calls.push({ method: 'getLocalStorage', args: key })
+      return this.storage.get(key) ?? ''
+    }
     async setLocalStorage(key: string, value: string) {
-      record('setLocalStorage', { key, value })
+      this.calls.push({ method: 'setLocalStorage', args: { key, value } })
       if (opts.storageSetFails) return false
-      storage.set(key, value)
+      this.storage.set(key, value)
       return true
-    },
+    }
     onEvenHubEvent(_listener: (event: unknown) => void) {
       return () => {}
-    },
+    }
   }
+  const sdk = new FakeSdk()
   return sdk
 }
 
@@ -197,6 +202,35 @@ test('renderSidebarPanel issues one textContainerUpgrade per changed container (
   await bridge.renderSidebarPanel(sidebarModel('changed', 'footer-b'))
   const upgrades = sdk.calls.filter((c) => c.method === 'textContainerUpgrade')
   assert.ok(upgrades.length >= 1, 'at least one container update issued')
+})
+
+// Issue 5 / navigation regression guard. The fake SDK's methods reference
+// `this.calls` (like the real SDK), so an unbound method call throws and
+// Promise.allSettled swallows it — the call would NOT be recorded in
+// sdk.calls even though updates were "dispatched". This test asserts the
+// recording actually happened, which fails the moment the bridge hoists a
+// method off the object. This is exactly the bug that froze the glasses
+// pointer and stopped live messages from rendering.
+test('textContainerUpgrade actually completes (not silently rejected by unbound method)', async () => {
+  const sdk = makeFakeSdk()
+  const bridge = new EvenHubGlassesBridge(sdk as any)
+  await bridge.render(sidebarModel('first', 'footer-a'))
+  await settleRenders()
+  await bridge.renderSidebarPanel(sidebarModel('changed', 'footer-b'))
+  const upgrades = sdk.calls.filter((c) => c.method === 'textContainerUpgrade')
+  // If the method were called unbound, `this.calls.push` would throw, the
+  // promise would reject, allSettled would swallow it, and upgrades.length
+  // would be 0 despite "dispatching". Asserting >0 catches that.
+  assert.ok(
+    upgrades.length > 0,
+    'textContainerUpgrade was dispatched but NOT recorded — the SDK method was likely called unbound (missing .bind). This silently rejects and freezes the glasses UI.',
+  )
+  // Navigation specifically: changing only the selection must update the
+  // panel-body container. Reproduces the up/down-pointer-stuck symptom.
+  sdk.calls.length = 0
+  await bridge.renderSidebarPanel({ ...sidebarModel('changed', 'footer-b'), title: 'Moved' })
+  const navUpgrades = sdk.calls.filter((c) => c.method === 'textContainerUpgrade')
+  assert.ok(navUpgrades.length > 0, 'a selection/position change must emit at least one update')
 })
 
 test('renderSidebarPanel with N changed containers completes in ~1 round-trip, not N (Issue 5 latency regression)', async () => {
