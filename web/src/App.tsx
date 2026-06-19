@@ -54,7 +54,43 @@ const PREFERRED_DEFAULT_MODEL: Record<string, string> = {
 function defaultModelFor(agent: string, models: string[]): string {
   const preferred = PREFERRED_DEFAULT_MODEL[agent]
   if (preferred && models.includes(preferred)) return preferred
+  // Fallback heuristics when the exact preferred model isn't in the list, so we
+  // still pick the flagship rather than blindly taking models[0] (which is
+  // rarely what users want — lists are sorted alphabetically/by-id, not by
+  // capability).
+  if (agent === 'claude') {
+    // Prefer the highest opus variant available (claude-opus-4-8, …-4-7, …),
+    // then the highest sonnet. Avoids "Default" (empty) when the exact
+    // preferred id is missing or the list hasn't refreshed yet.
+    const opus = models
+      .filter((m) => /^claude-opus-\d+(-\d+)?/i.test(m))
+      .sort((a, b) => modelVersionDesc(a, b))
+    if (opus.length) return opus[0]
+    const sonnet = models
+      .filter((m) => /^claude-sonnet-\d+(-\d+)?/i.test(m))
+      .sort((a, b) => modelVersionDesc(a, b))
+    if (sonnet.length) return sonnet[0]
+  }
+  if (agent === 'codex') {
+    // Avoid -pro variants: with a ChatGPT account, Codex rejects models like
+    // 'gpt-5.5-pro' ("not supported when using Codex with a ChatGPT account").
+    // Prefer the matching non-pro base model (gpt-5.5) if present.
+    const base = preferred && models.includes(preferred) ? preferred
+      : models.find((m) => /^gpt-5\.\d+$/.test(m))
+    if (base) return base
+  }
   return models[0] || 'default'
+}
+
+/** Compare two claude/gpt model ids by version, highest first. */
+function modelVersionDesc(a: string, b: string): number {
+  const va = (a.match(/\d+(?:-\d+)*/g) || []).join('.').split('-').map(Number)
+  const vb = (b.match(/\d+(?:-\d+)*/g) || []).join('.').split('-').map(Number)
+  for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+    const d = (vb[i] || 0) - (va[i] || 0)
+    if (d !== 0) return d
+  }
+  return 0
 }
 
 /**
@@ -260,15 +296,28 @@ export default function App() {
             // Fresh config: pre-select the preferred default for the agent
             // (e.g. claude-opus-4-8, gpt-5.5) when available, else models[0].
             newConfigs[agent.id] = { enabled: true, model: defaultModelFor(agent.id, result.models) }
-          } else if (agent.id === 'claude' && result.source !== 'refreshed') {
-            // Models not loaded yet — leave the saved selection untouched so we
-            // don't clobber a user preference with a stale guess.
           } else if (!newConfigs[agent.id].model || newConfigs[agent.id].model === 'default') {
-            // No explicit user choice — pre-select the preferred default.
-            // (An explicitly saved model is never overwritten.)
+            // No explicit user choice (empty or 'default') — pre-select the
+            // preferred default. This covers the case where the model list
+            // refreshes AFTER first paint and the saved selection was empty
+            // (previously showed "Default" for claude). An explicitly saved
+            // model is never overwritten.
             const picked = defaultModelFor(agent.id, result.models)
             if (picked !== 'default') {
               newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
+            }
+          } else if (agent.id === 'codex' && /-pro$/.test(newConfigs[agent.id].model)) {
+            // Codex -pro variants (gpt-5.5-pro, …) are rejected when using Codex
+            // with a ChatGPT account (400 "not supported"). We don't auto-strip
+            // every saved -pro (an API-account user may legitimately want one),
+            // but we DO surface the issue: if the saved -pro model is NOT in the
+            // live list returned by this codex install, it can't work here, so
+            // fall back to the non-pro default (gpt-5.5).
+            if (!result.models.includes(newConfigs[agent.id].model)) {
+              const picked = defaultModelFor(agent.id, result.models)
+              if (picked !== 'default' && picked !== newConfigs[agent.id].model) {
+                newConfigs[agent.id] = { ...newConfigs[agent.id], model: picked }
+              }
             }
           }
           if ((result.status === 'refreshing' || result.models.length === 0) && result.available !== false) {
