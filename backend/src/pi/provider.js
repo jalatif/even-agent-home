@@ -325,12 +325,29 @@ export function createPiProvider(emit) {
 
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
-            if (t.trim()) {
-                const lines = t.split('\n').filter(l => l.trim());
-                const errMsg = lines.findLast(l => l.startsWith('error:')) || lines[lines.length - 1] || t.trim();
-                lastError = errMsg.trim();
-                console.error(`[pi] stderr: ${errMsg.trim()}`);
-                safeEmit(emitId, { type: "error", value: errMsg.trim() });
+            if (!t.trim()) return;
+            const lines = t.split('\n').filter(l => l.trim());
+            // pi writes a LOT of non-error content to stderr: its startup banner
+            // (the `────` rule), docs paths (`.../docs/models.md`), and ANSI
+            // escape sequences (`^[[?7u`, `^[[?62;22c`). These are NORMAL output,
+            // not errors. Emitting every stderr line as `{type:"error"}` made the
+            // glasses flash "Agent Error" on every turn (and, with some models,
+            // shadow the real response). Only treat stderr as an error if a line
+            // is unambiguously an error marker; otherwise just log it for debug.
+            const isErrorLine = (l) =>
+                /^\s*error:/i.test(l) ||
+                /^\s*panic:/i.test(l) ||
+                /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
+            const errorLine = lines.find(l => isErrorLine(l));
+            if (errorLine) {
+                const errMsg = errorLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+                lastError = errMsg;
+                console.error(`[pi] stderr (error): ${errMsg}`);
+                safeEmit(emitId, { type: "error", value: errMsg });
+            } else {
+                // Non-error stderr (banner, docs path, ANSI). Log for debugging
+                // but do NOT surface to the user — it's not an error.
+                console.log(`[pi] stderr: ${lines[lines.length - 1].trim()}`);
             }
         });
 

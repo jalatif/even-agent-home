@@ -341,13 +341,25 @@ export function createOhMyPiProvider(emit) {
 
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
-            if (t.trim()) {
-                // Extract the last meaningful error line (not Bun/Node debug traces)
-                const lines = t.split('\n').filter(l => l.trim());
-                const errMsg = lines.findLast(l => l.startsWith('error:')) || lines[lines.length - 1] || t.trim();
-                lastError = errMsg.trim();
-                console.error(`[oh-my-pi] stderr: ${errMsg.trim()}`);
-                safeEmit(emitId, { type: "error", value: errMsg.trim() });
+            if (!t.trim()) return;
+            const lines = t.split('\n').filter(l => l.trim());
+            // oh-my-pi (like pi) writes non-error content to stderr: startup
+            // banner, docs paths, ANSI escapes, Bun/Node debug traces. Emitting
+            // every stderr line as {type:"error"} made the glasses flash
+            // "Agent Error" briefly on every turn. Only genuine error markers
+            // are surfaced; the rest is logged for debugging.
+            const isErrorLine = (l) =>
+                /^\s*error:/i.test(l) ||
+                /^\s*panic:/i.test(l) ||
+                /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
+            const errorLine = lines.find(l => isErrorLine(l));
+            if (errorLine) {
+                const errMsg = errorLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+                lastError = errMsg;
+                console.error(`[oh-my-pi] stderr (error): ${errMsg}`);
+                safeEmit(emitId, { type: "error", value: errMsg });
+            } else {
+                console.log(`[oh-my-pi] stderr: ${lines[lines.length - 1].trim()}`);
             }
         });
 
