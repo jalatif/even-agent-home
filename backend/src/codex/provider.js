@@ -180,6 +180,19 @@ export function createCodexProvider(emit, getClient) {
             return p.turn.threadId;
         if (typeof p.item?.threadId === "string" && p.item.threadId)
             return p.item.threadId;
+        // Some turn/item notifications reference the thread only via the turn
+        // ID. Map a known turn id back to its thread so completion/delta
+        // notifications are routed correctly even when the thread id is absent.
+        const turnId = typeof p.turn?.id === "string" ? p.turn.id
+            : typeof p.id === "string" ? p.id
+            : undefined;
+        if (turnId) {
+            for (const session of sessions.values()) {
+                if (session.currentTurnId && String(session.currentTurnId) === String(turnId)) {
+                    return session.activeThreadId ?? session.id ?? undefined;
+                }
+            }
+        }
         if ((method === "error" || method === "turn/completed") && sessions.size === 1) {
             return [...sessions.keys()][0];
         }
@@ -199,9 +212,19 @@ export function createCodexProvider(emit, getClient) {
     }
     client.handleNotification = (method, params) => {
         const threadId = resolveThreadId(method, params);
-        // No threadId — ignore account-level notifications silently, log others
+        // No threadId — these are account/session-global notifications. Some are
+        // EXPECTED and benign (no thread context by design) and must NOT be logged
+        // as errors — they'd cry wolf and drown the real signal:
+        //   - "skills/changed": Codex emits this when watched SKILL.md files
+        //     change; clients re-run skills/list. Pure cache-invalidation signal.
+        //   - "account/*": account-level lifecycle events.
+        // Only genuinely unexpected un-threaded notifications get logged, so a
+        // real protocol drift still surfaces.
         if (!threadId) {
-            if (!method.startsWith("account/")) {
+            const isKnownGlobal = method.startsWith("account/") ||
+                method === "skills/changed" ||
+                method === "skills/list";
+            if (!isKnownGlobal) {
                 console.error(`[codex-provider] notification missing threadId: method=${method}`);
             }
             return;

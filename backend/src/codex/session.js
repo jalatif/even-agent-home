@@ -326,6 +326,7 @@ export class CodexSession {
         }
         if (method === "error") {
             const err = p.error?.message ?? p.error ?? "";
+            console.warn(`[codex-session] error notification on thread ${this.activeThreadId}: ${String(err).slice(0, 200)}`);
             if (err)
                 this.send({ type: "error", message: String(err) });
             return;
@@ -342,6 +343,11 @@ export class CodexSession {
                 : this.assistantText ||
                     turnErr ||
                     (success ? "" : "Turn failed");
+            // Diagnosability: log the turn outcome so a "no response" symptom
+            // can be traced to its cause (failed turn, empty output, error
+            // status) rather than guessed at. The skills/changed notifications
+            // are NOT this signal — they are benign cache-invalidation noise.
+            console.log(`[codex-session] turn/completed thread=${this.activeThreadId} status=${status} textLen=${this.assistantText.length} err=${turnErr ? JSON.stringify(turnErr).slice(0, 120) : "(none)"}`);
             const usage = turn.usage ?? {};
             this.runningInputTokens = (usage.inputTokens ?? usage.input_tokens ?? 0);
             this.runningOutputTokens = (usage.outputTokens ?? usage.output_tokens ?? 0);
