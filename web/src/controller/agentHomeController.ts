@@ -291,7 +291,13 @@ export class AgentHomeController {
         this.openSessionsList(this.state.agent)
       } else if (this.state.screen === 'sidebar.sessions') {
         this.boot() // Back to agents
-      } else if (this.state.screen === 'sidebar.agents') {
+      } else if (this.state.screen === 'sidebar.agents' || this.state.screen === 'loading') {
+        // `loading` is the root page at boot — it is the screen the user lands
+        // on before any agent/session is open (and stays there whenever the
+        // backend is unreachable or unconfigured). A double-tap here must reach
+        // the exit path, otherwise `shutDownPageContainer` is bundled but never
+        // invoked from the initial page. This branch mirrors the agent-list
+        // behavior: prefer the SDK shutdown, else fall back to screen-off.
         if (this.bridge?.showExitConfirmation) {
           await this.bridge.showExitConfirmation()
         } else if (this.bridge?.turnScreenOff) {

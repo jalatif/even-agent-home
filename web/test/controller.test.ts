@@ -53,3 +53,29 @@ test('root double press uses shutdown bridge instead of screen-off fallback', as
   assert.deepEqual(calls, ['showExitConfirmation'])
   assert.equal(controller.getState().screen, 'sidebar.agents')
 })
+
+test('double press on the boot (loading) root page fires showExitConfirmation', async () => {
+  __resetApiStateForTests()
+
+  const calls: string[] = []
+  const controller = new AgentHomeController({
+    async render() {},
+    async setAudioEnabled() {},
+    async showExitConfirmation() {
+      calls.push('showExitConfirmation')
+    },
+    async turnScreenOff() {
+      calls.push('turnScreenOff')
+    },
+  })
+
+  // `boot()` with no backend config leaves the controller on the `loading`
+  // screen — that is the actual root page a user sees at startup before the
+  // agent list resolves. A double-tap there must reach the exit path.
+  await controller.boot()
+  assert.equal(controller.getState().screen, 'loading')
+
+  await controller.handleInput({ type: 'doublePress' })
+
+  assert.deepEqual(calls, ['showExitConfirmation'])
+})
