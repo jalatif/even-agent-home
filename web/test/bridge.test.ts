@@ -93,12 +93,18 @@ function makeFakeSdk(opts: FakeSdkOptions = {}) {
       this.storage.set(key, value)
       return true
     }
-    onEvenHubEvent(_listener: (event: unknown) => void) {
+    onEvenHubEvent() {
       return () => {}
     }
   }
   const sdk = new FakeSdk()
   return sdk
+}
+
+type BridgeSdk = ConstructorParameters<typeof EvenHubGlassesBridge>[0]
+
+function createBridge(sdk: ReturnType<typeof makeFakeSdk>) {
+  return new EvenHubGlassesBridge(sdk as unknown as BridgeSdk)
 }
 
 // A minimal sidebar screen model sufficient to exercise the render paths.
@@ -136,7 +142,7 @@ async function settleRenders() {
 
 test('bridge.setLocalStorage writes through to the SDK store', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   const ok = await bridge.setLocalStorage('apiConfig', JSON.stringify({ baseUrl: 'http://x', token: 't' }))
   assert.equal(ok, true)
   assert.equal(sdk.storage.get('apiConfig'), JSON.stringify({ baseUrl: 'http://x', token: 't' }))
@@ -148,14 +154,14 @@ test('bridge.setLocalStorage writes through to the SDK store', async () => {
 test('bridge.getLocalStorage reads through from the SDK store', async () => {
   const sdk = makeFakeSdk()
   sdk.storage.set('apiConfig', JSON.stringify({ baseUrl: 'http://y', token: 't2' }))
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   const value = await bridge.getLocalStorage('apiConfig')
   assert.equal(value, JSON.stringify({ baseUrl: 'http://y', token: 't2' }))
 })
 
 test('bridge.getLocalStorage returns "" for a missing key (not undefined/throw)', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   const value = await bridge.getLocalStorage('does-not-exist')
   // The storage adapter in App.tsx does `v || null`, so "" must map to null
   // (missing). Returning undefined or throwing would break hydration.
@@ -168,7 +174,7 @@ test('bridge.getLocalStorage returns "" for a missing key (not undefined/throw)'
 // "grab then invoke" shape a careless refactor could reintroduce.
 test('storage methods work when invoked via a captured reference (no unbound-method regression)', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   // Mirror the fixed App.tsx pattern: call ON the instance, not off it.
   const captured = bridge
   await captured.setLocalStorage('k', 'v')
@@ -181,7 +187,7 @@ test('storage methods work when invoked via a captured reference (no unbound-met
 
 test('first render uses createStartUpPageContainer; subsequent renders use rebuildPageContainer', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   await bridge.render(sidebarModel('first'))
   await settleRenders()
   await bridge.render(sidebarModel('second'))
@@ -194,7 +200,7 @@ test('first render uses createStartUpPageContainer; subsequent renders use rebui
 
 test('renderSidebarPanel issues one textContainerUpgrade per changed container (parallelized)', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   // Prime hasRendered so the partial path is taken (not a full render).
   await bridge.render(sidebarModel('first', 'footer-a'))
   await settleRenders()
@@ -213,7 +219,7 @@ test('renderSidebarPanel issues one textContainerUpgrade per changed container (
 // pointer and stopped live messages from rendering.
 test('textContainerUpgrade actually completes (not silently rejected by unbound method)', async () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   await bridge.render(sidebarModel('first', 'footer-a'))
   await settleRenders()
   await bridge.renderSidebarPanel(sidebarModel('changed', 'footer-b'))
@@ -241,7 +247,7 @@ test('renderSidebarPanel with N changed containers completes in ~1 round-trip, n
   // serial loop is reintroduced — that is its whole purpose.
   const LATENCY = 80 // ms per SDK call
   const sdk = makeFakeSdk({ perCallLatencyMs: LATENCY })
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   await bridge.render(sidebarModel('first', 'footer-a'))
   // With latency > 0, settleRenders()'s microtasks aren't enough — the fake
   // SDK's createStartUpPageContainer resolves only after LATENCY ms, and only
@@ -280,7 +286,7 @@ test('renderSidebarPanel with N changed containers completes in ~1 round-trip, n
 test('enqueueSidebarPanel returns immediately and does not block the input path', async () => {
   const LATENCY = 60
   const sdk = makeFakeSdk({ perCallLatencyMs: LATENCY })
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   await bridge.render(sidebarModel('first'))
   const start = Date.now()
   // enqueue is synchronous (void); the render happens on a timer, not awaited.
@@ -293,7 +299,7 @@ test('enqueueSidebarPanel returns immediately and does not block the input path'
 
 test('dispose clears pending panel state without throwing', () => {
   const sdk = makeFakeSdk()
-  const bridge = new EvenHubGlassesBridge(sdk as any)
+  const bridge = createBridge(sdk)
   bridge.enqueueSidebarPanel(sidebarModel('queued'))
   // Must not throw and must drop the pending model.
   assert.doesNotThrow(() => bridge.dispose())

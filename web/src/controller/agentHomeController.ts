@@ -1,7 +1,7 @@
-import type { AppInput, AppState, ScreenModel } from './model'
-import { getScreenModel, calculateInitialScrollOffset } from './model'
-import { getApi, getApiConfig, getAgentConfigs } from '../api'
-import { logStateWork, logInputDispatch, nowMs } from '../testMode'
+import type { AppInput, AppState, ScreenModel } from './model.ts'
+import { getScreenModel, calculateInitialScrollOffset } from './model.ts'
+import { getApi, getApiConfig, getAgentConfigs } from '../api.ts'
+import { logStateWork, logInputDispatch, nowMs } from '../testMode.ts'
 
 function wrapText(text: string, maxLen: number): string[] {
   const result: string[] = [];
@@ -238,6 +238,12 @@ export class AgentHomeController {
     this.stopPolling()
     this.setState({ screen: 'loading', message: 'Connecting to backend...' })
     try {
+      const cfg = getApiConfig()
+      if (!cfg.baseUrl.trim() || !cfg.token.trim()) {
+        this.enabledAgents = []
+        this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
+        return
+      }
       const api = getApi()
       const allAgentsRaw = await api.getAgents()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -286,8 +292,12 @@ export class AgentHomeController {
       } else if (this.state.screen === 'sidebar.sessions') {
         this.boot() // Back to agents
       } else if (this.state.screen === 'sidebar.agents') {
-        this.setState({ screen: 'asleep', previous: this.state })
-        if (this.bridge?.turnScreenOff) this.bridge.turnScreenOff()
+        if (this.bridge?.showExitConfirmation) {
+          await this.bridge.showExitConfirmation()
+        } else if (this.bridge?.turnScreenOff) {
+          this.setState({ screen: 'asleep', previous: this.state })
+          await this.bridge.turnScreenOff()
+        }
       } else if (this.state.screen === 'asleep') {
         this.setState(this.state.previous || { screen: 'loading', message: 'Waking...' })
       } else if (this.state.screen === 'sidebarRecording' || this.state.screen === 'sidebarTranscribing' || this.state.screen === 'sidebarConfirm') {

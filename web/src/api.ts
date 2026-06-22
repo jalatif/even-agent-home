@@ -230,7 +230,11 @@ export class AgentHomeApi {
   }
 
   private get apiBaseUrl() {
-    return this.config.baseUrl.replace(/\/api\/?$/, '') + '/api'
+    const baseUrl = this.config.baseUrl.trim()
+    if (!baseUrl || !this.config.token.trim()) {
+      throw new Error('Agent Home backend is not configured')
+    }
+    return baseUrl.replace(/\/api\/?$/, '') + '/api'
   }
 
   async getAgents(): Promise<string[]> {
