@@ -230,8 +230,8 @@ export function createPiProvider(emit) {
         const args = [
             "-p",
             "--mode", "json",
-            "--no-extensions",
             "--no-skills",
+            "--provider", "litellm",
         ];
         if (resolvedModel) {
             args.push("--model", resolvedModel);
