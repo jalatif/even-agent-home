@@ -92,7 +92,7 @@ const DEFAULT_MODELS = {
     pi: ["deepseek-claude-flash","deepseek-claude-pro","deepseek-v4-flash","deepseek-v4-pro","gemma4-mac","gemma4-ollama-pc","minimax-m3","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max"],
     opencode: ["deepseek-claude-flash","deepseek-claude-pro","gemma4-mac","gemma4-ollama-pc","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max","deepseek-v4-flash","deepseek-v4-pro","minimax-m3"],
     hermes: ["hermes-v2", "hermes-pro"],
-    openclaw: ["openclaw/default", "openclaw/main"]
+    openclaw: ["openclaw/main"]
 };
 
 const modelCache = new Map(Object.entries(DEFAULT_MODELS).map(([provider, models]) => [
