@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const { AgentHomeController } = await import('../src/controller/agentHomeController.ts')
-const { __resetApiStateForTests } = await import('../src/api.ts')
+const { __resetApiStateForTests, setApiConfig } = await import('../src/api.ts')
 
 test('boot does not fetch /api/agents before backend config exists', async () => {
   __resetApiStateForTests()
@@ -78,4 +78,56 @@ test('double press on the boot (loading) root page fires showExitConfirmation', 
   await controller.handleInput({ type: 'doublePress' })
 
   assert.deepEqual(calls, ['showExitConfirmation'])
+})
+
+test('preserved boot refresh does not blank an active glasses screen', async () => {
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: true,
+    scrollSpeed: 'medium',
+  })
+
+  const originalFetch = globalThis.fetch
+  let releaseAgents!: () => void
+  const agentsGate = new Promise<void>(resolve => {
+    releaseAgents = resolve
+  })
+  globalThis.fetch = (async () => ({
+    ok: true,
+    async json() {
+      await agentsGate
+      return { agents: ['codex'] }
+    },
+  })) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    ;(controller as unknown as { state: unknown }).state = {
+      screen: 'sidebar.messages',
+      agent: 'codex',
+      sessionId: 'session-1',
+      messages: [{ role: 'assistant', text: 'Ready' }],
+      scrollOffset: 0,
+      isThinking: false,
+    }
+
+    const bootPromise = controller.boot({ preserveCurrentScreen: true })
+    await Promise.resolve()
+
+    assert.equal(controller.getState().screen, 'sidebar.messages')
+    releaseAgents()
+    await bootPromise
+
+    assert.equal(controller.getState().screen, 'sidebar.agents')
+  } finally {
+    const timers = controller as unknown as {
+      pollInterval: ReturnType<typeof setInterval> | null
+      animationInterval: ReturnType<typeof setInterval> | null
+    }
+    if (timers.pollInterval) clearInterval(timers.pollInterval)
+    if (timers.animationInterval) clearInterval(timers.animationInterval)
+    globalThis.fetch = originalFetch
+  }
 })

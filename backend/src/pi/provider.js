@@ -95,16 +95,23 @@ function encodeCwd(cwd) {
 
 
 function listSessionFilesForCwd(cwd) {
-    const dir = cwd ? join(SESSIONS_DIR, encodeCwd(cwd)) : null;
-    if (!dir || !existsSync(dir)) return [];
-    try {
-        if (!statSync(dir).isDirectory()) return [];
-        return readdirSync(dir)
-            .filter((f) => f.endsWith(".jsonl"))
-            .map((f) => join(dir, f));
-    } catch {
-        return [];
+    if (!cwd) return [];
+    const encodedDirs = [
+        encodeCwd(cwd),
+        encodeLegacyAbsoluteSessionDirName(resolveEquivalentPath(cwd)),
+    ].filter(Boolean);
+    const dirs = [...new Set(encodedDirs)].map((encoded) => join(SESSIONS_DIR, encoded));
+    const files = [];
+    for (const dir of dirs) {
+        if (!existsSync(dir)) continue;
+        try {
+            if (!statSync(dir).isDirectory()) continue;
+            files.push(...readdirSync(dir)
+                .filter((f) => f.endsWith(".jsonl"))
+                .map((f) => join(dir, f)));
+        } catch {}
     }
+    return files;
 }
 
 function listAllSessionFiles() {

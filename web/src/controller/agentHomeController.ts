@@ -69,6 +69,7 @@ export class AgentHomeController {
   private autoScrollInterval: any = null
   private backgroundTasks: Set<string> = new Set()
   private turnTimeout: ReturnType<typeof setTimeout> | null = null
+  private bootRequestId = 0
   // Wall-clock timestamp (ms) the current agent turn started — i.e. when
   // isThinking flipped to true. Cleared (null) when the turn ends. Drives the
   // "Agent is working | Ns" elapsed counter in the messages footer.
@@ -234,21 +235,28 @@ export class AgentHomeController {
 
   public getState() { return this.state }
 
-  public async boot() {
+  public async boot(options: { preserveCurrentScreen?: boolean } = {}) {
+    const requestId = ++this.bootRequestId
     this.stopPolling()
-    this.setState({ screen: 'loading', message: 'Connecting to backend...' })
+    const shouldShowLoading = !options.preserveCurrentScreen || this.state.screen === 'loading'
+    if (shouldShowLoading) {
+      this.setState({ screen: 'loading', message: 'Connecting to backend...' })
+    }
     try {
       const cfg = getApiConfig()
       if (!cfg.baseUrl.trim() || !cfg.token.trim()) {
+        if (requestId !== this.bootRequestId) return
         this.enabledAgents = []
         this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
         return
       }
       const api = getApi()
       const allAgentsRaw = await api.getAgents()
+      if (requestId !== this.bootRequestId) return
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const allAgents = allAgentsRaw.map((a: any) => typeof a === 'string' ? { id: a, available: true } : a)
       const configs = await getAgentConfigs()
+      if (requestId !== this.bootRequestId) return
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enabledAgents = allAgents.filter((a: any) => a.available && (configs[a.id] ? configs[a.id].enabled : true)).map((a: any) => a.id)
@@ -257,10 +265,15 @@ export class AgentHomeController {
       this.startPolling(); // Ensure polling is running globally
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
+      if (requestId !== this.bootRequestId) return
       const cfg = getApiConfig()
       const msg = err.message === 'Load failed' || !cfg.baseUrl || !cfg.token
         ? 'Use phone to configure AgentHome connection settings'
         : `Error: ${err.message}`
+      if (options.preserveCurrentScreen && this.state.screen !== 'loading') {
+        console.error('[boot]', msg)
+        return
+      }
       this.setState({ screen: 'loading', message: msg })
     }
   }
@@ -479,7 +492,7 @@ export class AgentHomeController {
       this.setState({ screen: 'sidebar.sessions', agent, sessions: [{ id: '', title: '+ New Session', state: 'idle' }, ...sessions], selectedSessionIndex: 0 })
     } catch (e) {
       console.error('[openSessionsList]', agent, e)
-      this.boot()
+      this.boot({ preserveCurrentScreen: true })
     }
   }
 

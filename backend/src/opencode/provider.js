@@ -436,11 +436,11 @@ export function createOpenCodeProvider(emit) {
         return sessionCacheRefresh;
     }
 
-    async function listSessions() {
+    async function listSessions(limit) {
         if (!sessionCache || Date.now() - sessionCacheTime > 30000) {
             await refreshSessionCache();
         }
-        return sortSessionList(sessionCache || []);
+        return sortSessionList(sessionCache || []).slice(0, limit || 20);
     }
 
     async function getHistory(sessionId, limit) {

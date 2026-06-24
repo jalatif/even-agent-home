@@ -311,7 +311,9 @@ router.get("/sessions", async (req, res) => {
     }
     
     const provider = getProviderInstance(providerName);
-    const cwd = req.query.cwd || process.env.PROJECT_DIR;
+    const cwd = typeof req.query.cwd === "string" && req.query.cwd.trim()
+        ? req.query.cwd
+        : undefined;
     const limit = Number(req.query.limit) || 20;
     
     try {

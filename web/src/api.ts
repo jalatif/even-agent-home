@@ -202,7 +202,7 @@ export class AgentHomeApi {
   }
 
   private async fetchEncrypted(url: string, options: RequestInit = {}) {
-    const { encryptPayload, decryptPayload } = await import('./crypto');
+    const { encryptPayload, decryptPayload } = await import('./crypto.ts');
     
     // Encrypt outgoing body if present
     if (options.body && typeof options.body === 'string') {
