@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { sortSessionList } from "../shared/sort-sessions.js";
 
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "openclaw";
-const DEFAULT_AGENT_ID = process.env.OPENCLAW_AGENT_ID || "default";
+const DEFAULT_AGENT_ID = process.env.OPENCLAW_AGENT_ID || "main";
 const DEFAULT_GATEWAY_PORT = 18789;
 const SESSION_REFRESH_MS = 15000;
 const SESSION_LIST_LIMIT = 50;
