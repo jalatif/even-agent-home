@@ -486,6 +486,11 @@ export function createOhMyPiProvider(emit) {
     function getStatus(sessionId) {
         const s = getSession(sessionId);
         if (s) return { state: s.busy ? "busy" : "idle", provider: "oh-my-pi", error: s.lastError || undefined };
+        // Session isn't tracked by THIS backend instance — it may be running
+        // under the omp CLI, another backend process, or pre-existed on disk.
+        // Fall back to the JSONL event log so /status agrees with /sessions.
+        const jsonlState = sessionStatusFromJsonl(sessionId);
+        if (jsonlState) return { state: jsonlState, provider: "oh-my-pi" };
         return null;
     }
 

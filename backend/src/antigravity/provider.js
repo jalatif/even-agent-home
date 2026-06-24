@@ -1,7 +1,7 @@
 import { spawn, execSync } from "node:child_process";
 import { openSync, readSync, closeSync } from "node:fs";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { homedir } from "node:os";
 import { sortSessionList } from "../shared/sort-sessions.js";
 import { debugLog } from "../debug.js";
@@ -393,10 +393,26 @@ export function createAntigravityProvider(emit) {
         return null;
     }
 
+    function getTranscriptStatusById(uuid) {
+        // Map a transcript UUID back to the brain dir, then read its status
+        // from the transcript file on disk. This is the fallback path for
+        // sessions that are not tracked by THIS backend instance (e.g. started
+        // by the agy CLI or another backend process).
+        for (const dir of listAllBrainDirs()) {
+            if (basename(dir) === uuid) return transcriptStatus(dir);
+        }
+        return null;
+    }
+
     function getStatus(sessionId) {
         const s = getSession(sessionId);
-        if (!s) return null;
-        return { state: s.busy ? "busy" : "idle", provider: "antigravity" };
+        if (s) return { state: s.busy ? "busy" : "idle", provider: "antigravity", error: s.lastError || undefined };
+        // Session isn't tracked by THIS backend instance — it may be running
+        // under the agy CLI or another process. Fall back to the transcript
+        // file on disk so /status agrees with /sessions.
+        const transcriptState = getTranscriptStatusById(sessionId);
+        if (transcriptState) return { state: transcriptState, provider: "antigravity" };
+        return null;
     }
 
     function getSessionStatus(sessionId) {

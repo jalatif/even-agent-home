@@ -511,13 +511,23 @@ export function createPiProvider(emit) {
 
     function getStatus(sessionId) {
         const s = getSession(sessionId);
-        if (!s) return null;
-        return { state: s.busy ? "busy" : "idle", provider: "pi", error: s.lastError || undefined };
+        if (s) return { state: s.busy ? "busy" : "idle", provider: "pi", error: s.lastError || undefined };
+        // Session isn't tracked by THIS backend instance — it may be running
+        // under the pi CLI, another backend process, or pre-existed on disk.
+        // Fall back to the JSONL event log, which is the source of truth for
+        // "is the agent currently working" regardless of which process owns
+        // the turn. Without this, /status says "idle" while /sessions shows
+        // the same session as "busy", and the glasses footer sticks at
+        // "Waiting for input" even though messages are actively streaming.
+        const jsonlState = sessionStatusFromJsonl(sessionId);
+        if (jsonlState) return { state: jsonlState, provider: "pi" };
+        return null;
     }
 
     function getSessionStatus(sessionId) {
         const s = getSession(sessionId);
-        return s?.busy ? "busy" : "idle";
+        if (s) return s.busy ? "busy" : "idle";
+        return sessionStatusFromJsonl(sessionId) || "idle";
     }
 
     function getInfo() {
