@@ -23,10 +23,11 @@ const PROVIDERS = [
   "oh-my-pi",
   "pi",
   "hermes",
+  "openclaw",
 ];
 
 // Providers whose persisted session stores support meaningful cwd filtering.
-// opencode and hermes do not expose cwd on their list backends in this app.
+// opencode, hermes, and openclaw do not expose cwd on their list backends in this app.
 const CWD_FILTER_PROVIDERS = new Set([
   "claude",
   "codex",

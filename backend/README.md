@@ -83,6 +83,7 @@ Each agent is launched via its own CLI tool that must be on `$PATH` for the corr
 | `codex` | `codex app-server` |
 | `opencode` | `opencode` |
 | `hermes` | bundled (no external dep) |
+| `openclaw` | `openclaw` + Gateway HTTP chat endpoint |
 | `antigravity` | `gemini` |
 | `oh-my-pi` | bundled |
 | `pi` | bundled |

@@ -354,7 +354,7 @@ export default function App() {
     api.getAgents().then(async (data: any[]) => {
       if (isCancelled()) return
       const agentStatuses: AgentStatus[] = data.map(d => typeof d === 'string' ? { id: d, available: true } : d);
-      const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes'];
+      const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes', 'openclaw'];
       agentStatuses.sort((a, b) => {
         const ia = PREFERRED_ORDER.indexOf(a.id);
         const ib = PREFERRED_ORDER.indexOf(b.id);
@@ -779,7 +779,7 @@ export default function App() {
                       )}
                     </div>
                     
-                    {agent.id !== 'hermes' && (
+                    {agent.id !== 'hermes' && agent.id !== 'openclaw' && (
                       <div style={{ display: 'flex', gap: '15px', marginTop: '15px', paddingTop: '15px', borderTop: '1px solid var(--border-light)', opacity: (!agent.available || !(agentConfigs[agent.id]?.enabled ?? true)) ? 0.5 : 1 }}>
                         <div style={{ flex: 1 }}>
                           <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '5px' }}>Model</label>

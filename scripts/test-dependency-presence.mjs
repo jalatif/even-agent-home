@@ -105,6 +105,7 @@ const CLI_BINS = {
     "oh-my-pi": "omp",
     "pi": "pi",
     "hermes": "hermes",
+    "openclaw": "openclaw",
 };
 function binPresent(bin) {
     if (bin === null) return "n/a (SDK)";

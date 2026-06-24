@@ -5,6 +5,7 @@ import { createClaudeProvider } from "../claude/provider.js";
 import { createCodexProvider } from "../codex/provider.js";
 import { createOpenCodeProvider } from "../opencode/provider.js";
 import { createHermesProvider } from "../hermes/provider.js";
+import { createOpenClawProvider } from "../openclaw/provider.js";
 import { createOhMyPiProvider } from "../oh-my-pi/provider.js";
 import { createPiProvider } from "../pi/provider.js";
 import { createAntigravityProvider } from "../antigravity/provider.js";
@@ -29,7 +30,8 @@ const providerFactories = {
     "antigravity": () => createAntigravityProvider(emit),
     "oh-my-pi": () => createOhMyPiProvider(emit),
     "pi": () => createPiProvider(emit),
-    "hermes": () => createHermesProvider(emit, false)
+    "hermes": () => createHermesProvider(emit, false),
+    "openclaw": () => createOpenClawProvider(emit)
 };
 
 const providerInstances = new Map();
@@ -69,7 +71,8 @@ const CLI_BINS = {
     "antigravity": "agy",
     "oh-my-pi": "omp",
     "pi": "pi",
-    "hermes": "hermes"
+    "hermes": "hermes",
+    "openclaw": "openclaw"
 };
 
 // Args passed to the agent binary to list its models. Defaults to ["models"].
@@ -88,7 +91,8 @@ const DEFAULT_MODELS = {
     antigravity: ["claude-haiku-4-5@20251001","claude-opus-4-5@20251101","claude-opus-4-6@default","claude-opus-4-7@default","claude-opus-4-8@default","claude-sonnet-4-5@20250929","claude-sonnet-4-6@default","deepseek-ai/deepseek-v3.1-maas","deepseek-ai/deepseek-v3.2-maas","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro","gemini-3-flash-preview","gemini-3.1-flash-lite","gemini-3.1-flash-lite-preview","gemini-3.1-pro-preview","gemini-3.1-pro-preview-customtools","gemini-3.5-flash","gemini-flash-latest","gemini-flash-lite-latest","meta/llama-3.3-70b-instruct-maas","meta/llama-4-maverick-17b-128e-instruct-maas","moonshotai/kimi-k2-thinking-maas","openai/gpt-oss-120b-maas","openai/gpt-oss-20b-maas","qwen/qwen3-235b-a22b-instruct-2507-maas","zai-org/glm-4.7-maas","zai-org/glm-5-maas"],
     pi: ["deepseek-claude-flash","deepseek-claude-pro","deepseek-v4-flash","deepseek-v4-pro","gemma4-mac","gemma4-ollama-pc","minimax-m3","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max"],
     opencode: ["deepseek-claude-flash","deepseek-claude-pro","gemma4-mac","gemma4-ollama-pc","openclaw","qwen3-VL-ollama-pc","qwen3.5-mac","qwen3.6-27B-pc","qwen3.6-35B-pc","qwen3.6-ollama-pc","router-glm-5.1","router-gpt-4o-mini","router-qwen3.7-max","deepseek-v4-flash","deepseek-v4-pro","minimax-m3"],
-    hermes: ["hermes-v2", "hermes-pro"]
+    hermes: ["hermes-v2", "hermes-pro"],
+    openclaw: ["openclaw/default", "openclaw/main"]
 };
 
 const modelCache = new Map(Object.entries(DEFAULT_MODELS).map(([provider, models]) => [
@@ -207,7 +211,7 @@ async function refreshModels(provider, { force = false } = {}) {
     }
 
     const bin = CLI_BINS[provider];
-    if (bin === null || provider === "hermes") {
+    if (bin === null || provider === "hermes" || provider === "openclaw") {
         cached.models = DEFAULT_MODELS[provider] ?? cached.models ?? [];
         cached.source = "static";
         cached.status = "complete";

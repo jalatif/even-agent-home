@@ -40,7 +40,7 @@ AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connec
   - Action: Sending submits the text to the backend; streaming response updates the session view in real-time.
 
 ## Backend Requirements
-- **Single Service**: Must handle all providers (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes) simultaneously.
+- **Single Service**: Must handle all providers (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes, openclaw) simultaneously.
 - **Model Normalization**: Provider adapters must handle backwards-compatible saved model IDs. `pi` normalizes unqualified custom model aliases through `~/.pi/agent/models.json` before invoking the CLI.
 - **Error Semantics**: Provider errors must surface through `/api/status.error`, but stale errors must clear after successful later turns. The frontend must not show `Agent Error` for ordinary history-catch-up races.
 - **API Endpoints**:

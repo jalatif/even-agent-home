@@ -99,6 +99,7 @@ agents continue to work.
 | `codex` | `codex app-server` |
 | `opencode` | `opencode` |
 | `hermes` | bundled |
+| `openclaw` | `openclaw` + Gateway HTTP chat endpoint |
 | `antigravity` | `gemini` |
 | `oh-my-pi` | bundled |
 | `pi` | bundled |

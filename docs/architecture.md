@@ -1,7 +1,7 @@
 # AgentHome Architecture
 
 ## Overview
-AgentHome is an Even Realities G2 glasses application that unifies access to multiple AI agents (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes) through a single backend service. It allows users to browse agents, create new sessions, resume existing sessions, and send voice-transcribed messages directly from the glasses.
+AgentHome is an Even Realities G2 glasses application that unifies access to multiple AI agents (claude, codex, oh-my-pi, antigravity, pi, opencode, hermes, openclaw) through a single backend service. It allows users to browse agents, create new sessions, resume existing sessions, and send voice-transcribed messages directly from the glasses.
 
 ## Architecture Components
 

@@ -8,7 +8,7 @@
  *      anything at all for any provider.
  *   2. dispose() exists on EVERY provider and clears state without throwing.
  *      This matters because shutdownProviders() only disposes providers that
- *      expose dispose() — claude/codex/hermes previously leaked child
+ *      expose dispose() — claude/codex/hermes/openclaw previously leaked child
  *      processes on SIGINT/SIGTERM.
  *
  * Uses oh-my-pi for the live interrupt test (its SIGTERM+SIGKILL escalation
@@ -67,6 +67,7 @@ try {
         "oh-my-pi": () => import("../backend/src/oh-my-pi/provider.js").then((m) => m.createOhMyPiProvider(() => {})),
         pi: () => import("../backend/src/pi/provider.js").then((m) => m.createPiProvider(() => {})),
         hermes: () => import("../backend/src/hermes/provider.js").then((m) => m.createHermesProvider(() => {})),
+        openclaw: () => import("../backend/src/openclaw/provider.js").then((m) => m.createOpenClawProvider(() => {})),
     };
     for (const [id, make] of Object.entries(factories)) {
         try {
