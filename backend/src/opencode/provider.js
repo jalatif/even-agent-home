@@ -421,6 +421,29 @@ export function createOpenCodeProvider(emit) {
                         timestamp: new Date(r.time_updated).toISOString(),
                         cwd: "", provider: "opencode", status: null,
                     }));
+                    // Merge in-memory busy sessions on top of the DB snapshot
+                    // so the sessions list shows a spinner for actively-running
+                    // sessions (same pattern as pi/oh-my-pi/antigravity, but
+                    // here the in-memory Map IS authoritative since sessions
+                    // always go through this backend's server).
+                    for (const [id, s] of sessions) {
+                        if (!s.busy) continue;
+                        const existing = result.find(r => r.id === id);
+                        if (existing) {
+                            existing.status = "busy";
+                        } else {
+                            // Session created but not yet persisted to the DB —
+                            // prepend it so it appears at the top of the list.
+                            result.unshift({
+                                id,
+                                title: "OpenCode Session",
+                                timestamp: new Date().toISOString(),
+                                cwd: s.cwd || "",
+                                provider: "opencode",
+                                status: "busy",
+                            });
+                        }
+                    }
                     sessionCache = result;
                     sessionCacheTime = Date.now();
                     resolvePromise(result);
