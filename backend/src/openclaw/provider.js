@@ -442,8 +442,11 @@ export function createOpenClawProvider(emit) {
             session.busy = false;
             session.abortController = null;
             session.partialText = "";
-            // A new chat happened; the cache is now stale.
-            sessionCache = null;
+            // A new chat happened; trigger an immediate refresh so the
+            // sessions list picks up the new entry without waiting for
+            // the 15s interval timer. Don't null the cache — the old
+            // data is a better placeholder than an empty list.
+            refreshSessionCache();
             emit(sessionId, { type: "result", success: true, text: fullResponse, provider: "openclaw" });
             emit(sessionId, { type: "status", state: "idle" });
             return { sessionId, provider: "openclaw" };
