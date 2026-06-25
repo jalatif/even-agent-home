@@ -225,7 +225,35 @@ export function createPiProvider(emit) {
         return null;
     }
 
-    function buildArgs(text, piSessionId, model, thinking) {
+    /** Given a pi session UUID, find the matching JSONL file and return
+ *  the session cwd from its header. Returns null if unknown. */
+function findSessionCwd(sessionId) {
+    try {
+        const dirs = readdirSync(SESSIONS_DIR);
+        let best = null;
+        let bestSize = 0;
+        for (const dir of dirs) {
+            const dirPath = join(SESSIONS_DIR, dir);
+            const files = readdirSync(dirPath);
+            for (const f of files) {
+                if (!f.includes(sessionId)) continue;
+                const fp = join(dirPath, f);
+                const st = statSync(fp);
+                if (st.size > bestSize) {
+                    bestSize = st.size;
+                    const headers = readSessionHeader(fp);
+                    if (headers[0]?.cwd) {
+                        best = headers[0].cwd;
+                    }
+                }
+            }
+        }
+        return best;
+    } catch {}
+    return null;
+}
+
+function buildArgs(text, piSessionId, model, thinking) {
         const resolvedModel = normalizeModel(model);
         const args = [
             "-p",
@@ -242,16 +270,27 @@ export function createPiProvider(emit) {
             args.push("--thinking", thinking);
         }
         if (piSessionId) {
-            args.push("--resume", piSessionId);
+            args.push("--session", piSessionId);
         }
         args.push(text);
         return args;
     }
 
     async function prompt(phoneSessionId, text, cwd, model, thinking, yolo) {
-        const resolvedDir = cwd || process.env.PROJECT_DIR || process.cwd();
+        let resolvedDir = cwd || process.env.PROJECT_DIR || process.cwd();
 
         const existing = phoneSessionId ? getSession(phoneSessionId) : null;
+
+        // When resuming an existing session (not in our local map), use its
+        // stored cwd from the JSONL header so pi doesn't ask to fork when
+        // the backend runs from a different working directory.
+        if (phoneSessionId && !existing) {
+            const sessionCwd = findSessionCwd(phoneSessionId);
+            if (sessionCwd) {
+                resolvedDir = sessionCwd;
+            }
+        }
+
         if (existing && existing.busy) {
             throw Object.assign(new Error("Session is busy"), { statusCode: 409 });
         }

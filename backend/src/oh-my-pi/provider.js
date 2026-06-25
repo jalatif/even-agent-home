@@ -211,7 +211,7 @@ export function createOhMyPiProvider(emit) {
             args.push("--thinking", thinking);
         }
         if (ompSessionId) {
-            args.push("--resume", ompSessionId);
+            args.push("--session", ompSessionId);
         }
         args.push(text);
         return args;
