@@ -483,17 +483,20 @@ export class AgentHomeController {
   }
 
   private async openSessionsList(agent: string) {
+    console.log('[openSessionsList]', agent, 'starting, screen=', this.state.screen)
     this.setState({ screen: 'loading', message: `Loading ${agent}...` })
     try {
       const api = getApi()
       const rawSessions = await api.getSessions(agent)
+      console.log('[openSessionsList]', agent, 'got', rawSessions.length, 'sessions')
       // Sort most recent first, filter out completely empty ones (assuming empty if title is missing/default and ID is short)
       const sessions = rawSessions
         .filter(s => s.title && s.title !== 'Session' && s.title.trim() !== '')
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       this.setState({ screen: 'sidebar.sessions', agent, sessions: [{ id: '', title: '+ New Session', state: 'idle' }, ...sessions], selectedSessionIndex: 0 })
     } catch (e) {
-      console.error('[openSessionsList]', agent, e)
+      console.error('[openSessionsList]', agent, 'error', e)
+      console.log('[openSessionsList] calling boot, screen=', this.state.screen)
       this.boot({ preserveCurrentScreen: true })
     }
   }
