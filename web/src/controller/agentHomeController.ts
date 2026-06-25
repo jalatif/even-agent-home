@@ -238,18 +238,20 @@ export class AgentHomeController {
   public async boot(options: { preserveCurrentScreen?: boolean } = {}) {
     const requestId = ++this.bootRequestId
     this.stopPolling()
+    // Check config before showing any loading message so the glasses never
+    // flash "Connecting to backend…" when no URL/token is configured.
+    const cfg = getApiConfig()
+    if (!cfg.baseUrl.trim() || !cfg.token.trim()) {
+      if (requestId !== this.bootRequestId) return
+      this.enabledAgents = []
+      this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
+      return
+    }
     const shouldShowLoading = !options.preserveCurrentScreen || this.state.screen === 'loading'
     if (shouldShowLoading) {
       this.setState({ screen: 'loading', message: 'Connecting to backend...' })
     }
     try {
-      const cfg = getApiConfig()
-      if (!cfg.baseUrl.trim() || !cfg.token.trim()) {
-        if (requestId !== this.bootRequestId) return
-        this.enabledAgents = []
-        this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
-        return
-      }
       const api = getApi()
       const allAgentsRaw = await api.getAgents()
       if (requestId !== this.bootRequestId) return
