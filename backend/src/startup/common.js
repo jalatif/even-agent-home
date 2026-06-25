@@ -173,9 +173,48 @@ function canBindLocalPort(port) {
 export async function startCodexAppServer() {
     const listenUrl = `ws://127.0.0.1:${CODEX_APP_SERVER_PORT}`;
     if (!(await canBindLocalPort(CODEX_APP_SERVER_PORT))) {
-        console.error(`[codex] ERROR: Port ${CODEX_APP_SERVER_PORT} appears to be in use. Set CODEX_APP_SERVER_PORT to another port and restart.`);
-        console.error(`[codex] ERROR: Codex app-server was not started.`);
-        return false;
+        // Port is in use — likely a leftover process from a previous
+        // non-graceful shutdown. Try to identify and kill it so we
+        // don't force the user to manually find and restart.
+        try {
+            const pidStr = execSync(`lsof -ti :${CODEX_APP_SERVER_PORT}`, { encoding: "utf8" }).trim();
+            const pid = Number(pidStr.split('\n')[0]); // take first PID if multiple
+            if (pid && !isNaN(pid)) {
+                // Safety check: only kill if this is actually a codex app-server,
+                // not some other process that happened to bind the port.
+                let procName = "";
+                try {
+                    procName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf8" }).trim();
+                } catch {}
+                const isCodex = /codex|app-server/i.test(procName);
+                if (isCodex) {
+                    console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} in use by PID ${pid} (${procName || "unknown"}). Reclaiming stale app-server…`);
+                    try { process.kill(pid, "SIGTERM"); } catch {}
+                    // Wait up to 2s for the port to release
+                    for (let i = 0; i < 20; i++) {
+                        await new Promise(r => setTimeout(r, 100));
+                        if (await canBindLocalPort(CODEX_APP_SERVER_PORT)) break;
+                    }
+                    if (await canBindLocalPort(CODEX_APP_SERVER_PORT)) {
+                        console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} freed — continuing.`);
+                    } else {
+                        console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} still in use after SIGTERM. Try SIGKILL.`);
+                        try { process.kill(pid, "SIGKILL"); } catch {}
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                } else {
+                    console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} in use by PID ${pid} (${procName || "unknown"}) — NOT a codex process. Will not reclaim.`);
+                }
+            }
+        } catch (lsofErr) {
+            // lsof failed — possibly no lsof on this system, or the process
+            // holding the port is foreign. Fall through to the original error.
+        }
+        if (!(await canBindLocalPort(CODEX_APP_SERVER_PORT))) {
+            console.error(`[codex] ERROR: Port ${CODEX_APP_SERVER_PORT} appears to be in use. Set CODEX_APP_SERVER_PORT to another port and restart.`);
+            console.error(`[codex] ERROR: Codex app-server was not started.`);
+            return false;
+        }
     }
     return new Promise((resolve) => {
         let resolved = false;
