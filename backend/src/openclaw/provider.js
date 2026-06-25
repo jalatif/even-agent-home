@@ -348,6 +348,24 @@ export function createOpenClawProvider(emit) {
         return sessionId ? sessions.get(sessionId) || null : null;
     }
 
+    /** Load the conversation history from an existing transcript when
+     *  resuming a session that was created externally. Returns [] if
+     *  the session has no on-disk transcript yet. */
+    function loadMessagesFromTranscript(sessionId) {
+        if (!sessionId) return [];
+        const dirs = knownTranscriptDirs.length > 0
+            ? knownTranscriptDirs
+            : collectTranscriptDirsFromConfig();
+        for (const dir of dirs) {
+            if (!dir) continue;
+            const transcriptPath = join(dir, `${sessionId}.jsonl`);
+            if (existsSync(transcriptPath)) {
+                return readTranscriptMessages(transcriptPath);
+            }
+        }
+        return [];
+    }
+
     async function prompt(phoneSessionId, text, cwd, model, thinking, yolo) {
         const existing = phoneSessionId ? getSession(phoneSessionId) : null;
         if (existing?.busy) {
@@ -357,7 +375,7 @@ export function createOpenClawProvider(emit) {
         const session = existing || {
             id: phoneSessionId || `openclaw-${Date.now()}`,
             busy: true,
-            messages: [],
+            messages: loadMessagesFromTranscript(phoneSessionId),
             partialText: "",
             abortController: null,
         };
