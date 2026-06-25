@@ -566,7 +566,40 @@ export function createPiProvider(emit) {
         return null;
     }
 
-    function buildSessionList(cwd) {
+    /** Read the first user message from a pi session JSONL file.
+ *  The session header (first line) may not have a meaningful title, so
+ *  we walk through the first 32KB looking for the first user message. */
+function firstUserMessageLine(file) {
+    try {
+        const buf = Buffer.alloc(32768);
+        const fd = openSync(file, "r");
+        const bytesRead = readSync(fd, buf, 0, 32768, 0);
+        closeSync(fd);
+        const text = buf.toString("utf8", 0, bytesRead);
+        for (const line of text.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+                const e = JSON.parse(trimmed);
+                if (e.type === "message" && e.message?.role === "user") {
+                    const content = e.message.content;
+                    if (Array.isArray(content)) {
+                        for (const block of content) {
+                            if (block.type === "text" && block.text?.trim()) {
+                                return block.text.trim();
+                            }
+                        }
+                    } else if (typeof content === "string" && content.trim()) {
+                        return content.trim();
+                    }
+                }
+            } catch {}
+        }
+    } catch {}
+    return null;
+}
+
+function buildSessionList(cwd) {
         const files = cwd ? listSessionFilesForCwd(cwd) : listAllSessionFiles();
         const result = [];
         for (const file of files) {
@@ -578,7 +611,10 @@ export function createPiProvider(emit) {
                 const stats = statSync(file);
                 if (stats.size < 300) continue;
                 let title = (sessionEvent.title || "").slice(0, 64).trim();
-                if (!title) title = `pi-${sessionEvent.id.split('-')[0]}`;
+                if (!title) {
+                    const firstMsg = firstUserMessageLine(file);
+                    title = firstMsg ? firstMsg.slice(0, 64) : `pi-${sessionEvent.id.split('-')[0]}`;
+                }
                 result.push({
                     id: sessionEvent.id,
                     title,
