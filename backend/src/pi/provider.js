@@ -114,6 +114,8 @@ function listSessionFilesForCwd(cwd) {
     return files;
 }
 
+const STALE_SESSION_MS = 5 * 60 * 1000; // 5 min — if last user activity is older, treat as idle
+
 function listAllSessionFiles() {
     if (!existsSync(SESSIONS_DIR)) return [];
     try {
@@ -593,12 +595,23 @@ function buildArgs(text, piSessionId, model, thinking) {
             const events = readSessionJsonl(file);
             const sessionEvent = events.find((e) => e.type === "session" && e.id === sessionId);
             if (!sessionEvent) continue;
-            // Check if the last event indicates an active turn
+            // Walk backwards from the most recent event to determine status.
             for (let i = events.length - 1; i >= 0; i--) {
                 const e = events[i];
                 if (e.type === "agent_end" || e.type === "turn_end") return "idle";
                 if (e.type === "message" && e.message?.role === "assistant" && e.message.stopReason && e.message.stopReason !== "toolUse") return "idle";
-                if (e.type === "message" && (e.message?.role === "user" || e.message?.role === "toolResult")) return "busy";
+                if (e.type === "message" && (e.message?.role === "user" || e.message?.role === "toolResult")) {
+                    // The last activity was a user message with no trailing
+                    // turn_end — the agent may be working, or it may have
+                    // crashed/exited. If the message is old, treat as idle.
+                    if (e.timestamp) {
+                        const msgTime = new Date(e.timestamp).getTime();
+                        if (!isNaN(msgTime) && Date.now() - msgTime > STALE_SESSION_MS) {
+                            return "idle";
+                        }
+                    }
+                    return "busy";
+                }
             }
             return "idle";
         }

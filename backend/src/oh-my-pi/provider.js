@@ -38,6 +38,7 @@ const OMP_HOME = process.env.OMP_HOME || join(homedir(), ".omp");
 const SESSIONS_DIR = join(OMP_HOME, "agent", "sessions");
 const SESSION_CACHE_TTL_MS = 30000;
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+const STALE_SESSION_MS = 5 * 60 * 1000; // 5 min — if last user activity is older, treat as idle
 const MAX_HISTORY = 50;
 const MAX_PHONE_MAP_ENTRIES = 500;
 
@@ -527,11 +528,16 @@ export function createOhMyPiProvider(emit) {
             if (!headers[0] || headers[0].id !== sessionId) continue;
             const events = readSessionJsonl(file);
             let isBusy = false;
+            let lastUserTs = 0;
             for (const e of events) {
                 if (e.type === "message" && e.message) {
                     const role = e.message.role;
                     if (role === "user" || role === "toolResult") {
                         isBusy = true;
+                        if (e.timestamp) {
+                            const t = new Date(e.timestamp).getTime();
+                            if (!isNaN(t)) lastUserTs = t;
+                        }
                     } else if (role === "assistant") {
                         isBusy = e.stopReason === "toolUse";
                     }
@@ -539,6 +545,11 @@ export function createOhMyPiProvider(emit) {
                 if (e.type === "agent_end" || e.type === "turn_end") {
                     isBusy = false;
                 }
+            }
+            // If the last activity was a user message with no trailing
+            // turn_end but it's old, treat as idle (session is stuck).
+            if (isBusy && lastUserTs > 0 && Date.now() - lastUserTs > STALE_SESSION_MS) {
+                return "idle";
             }
             return isBusy ? "busy" : "idle";
         }
