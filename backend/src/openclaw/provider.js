@@ -378,6 +378,7 @@ export function createOpenClawProvider(emit) {
             messages: loadMessagesFromTranscript(phoneSessionId),
             partialText: "",
             abortController: null,
+            lastError: undefined,
         };
         session.busy = true;
         session.abortController = new AbortController();
@@ -476,6 +477,7 @@ export function createOpenClawProvider(emit) {
             } else {
                 emit(sessionId, { type: "error", value: err.message });
                 emit(sessionId, { type: "status", state: "idle" });
+                session.lastError = err.message;
             }
             return { sessionId, provider: "openclaw" };
         }
@@ -484,7 +486,7 @@ export function createOpenClawProvider(emit) {
     function getStatus(sessionId) {
         const s = getSession(sessionId);
         if (!s) return null;
-        return { state: s.busy ? "busy" : "idle", provider: "openclaw" };
+        return { state: s.busy ? "busy" : "idle", provider: "openclaw", error: s.lastError || undefined };
     }
 
     function getSessionStatus(sessionId) {
