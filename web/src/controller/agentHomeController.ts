@@ -235,7 +235,7 @@ export class AgentHomeController {
 
   public getState() { return this.state }
 
-  public async boot(options: { preserveCurrentScreen?: boolean } = {}) {
+  public async boot(options: { preserveCurrentScreen?: boolean, skipLoading?: boolean } = {}) {
     const requestId = ++this.bootRequestId
     this.stopPolling()
     // Check config before showing any loading message so the glasses never
@@ -247,7 +247,7 @@ export class AgentHomeController {
       this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
       return
     }
-    const shouldShowLoading = !options.preserveCurrentScreen || this.state.screen === 'loading'
+    const shouldShowLoading = !options.preserveCurrentScreen && !options.skipLoading || this.state.screen === 'loading'
     if (shouldShowLoading) {
       this.setState({ screen: 'loading', message: 'Connecting to backend...' })
     }
@@ -305,7 +305,7 @@ export class AgentHomeController {
       } else if (this.state.screen === 'sidebar.messages' || this.state.screen === 'sidebarSending') {
         this.openSessionsList(this.state.agent)
       } else if (this.state.screen === 'sidebar.sessions') {
-        this.boot() // Back to agents
+        this.boot({ skipLoading: true }) // Back to agents
       } else if (this.state.screen === 'sidebar.agents' || this.state.screen === 'loading') {
         // `loading` is the root page at boot — it is the screen the user lands
         // on before any agent/session is open (and stays there whenever the
