@@ -664,4 +664,17 @@ export class AgentHomeController {
       this.openSession(agent, sessionId)
     }
   }
+
+  public async stopAgent() {
+    if (this.state.screen !== 'sidebar.messages') return
+    if (!this.state.isThinking) return
+    const { agent, sessionId } = this.state
+    if (!agent || !sessionId) return
+    try {
+      await getApi().interrupt(agent, sessionId)
+      this.setState({ ...this.state, isThinking: false, agentError: undefined }, { renderBridge: true })
+    } catch (e) {
+      console.error('[stopAgent]', agent, e)
+    }
+  }
 }

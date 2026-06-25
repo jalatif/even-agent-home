@@ -275,6 +275,13 @@ export class AgentHomeApi {
     })
   }
 
+  async interrupt(agent: string, sessionId: string): Promise<void> {
+    await this.fetchEncrypted(`${this.apiBaseUrl}/interrupt`, {
+      method: 'POST',
+      body: JSON.stringify({ provider: agent, sessionId })
+    })
+  }
+
   async transcribeAudio(pcmData: Uint8Array): Promise<string> {
     // STT is always resolved by the BACKEND. The provider (built-in Whisper,
     // Deepgram, OpenAI Whisper) is selected by the backend's

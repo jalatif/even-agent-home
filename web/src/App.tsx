@@ -592,8 +592,15 @@ export default function App() {
                   onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
                   disabled={isThinking || screenState.screen === 'sidebarSending'}
                 />
-                <button className="send-btn" onClick={handleSendMessage} disabled={isThinking || screenState.screen === 'sidebarSending'}>Send</button>
               </div>
+              {!isThinking && (
+                <button className="send-btn actions" onClick={handleSendMessage} disabled={screenState.screen === 'sidebarSending'}>Send</button>
+              )}
+              {isThinking && (
+                <div className="glasses-actions">
+                  <button className="stop-btn" onClick={() => controller?.stopAgent()} title="Stop agent">⏹</button>
+                </div>
+              )}
             </div>
           )}
           {onMessagesOrSending && (

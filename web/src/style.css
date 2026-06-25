@@ -381,7 +381,13 @@ body {
   border-color: var(--accent);
 }
 
-.glasses-text-input button.send-btn {
+.glasses-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+button.send-btn.actions {
   background: var(--accent);
   color: #fff;
   border: none;
@@ -390,9 +396,29 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
+  height: 36px;
+  line-height: 36px;
 }
-.glasses-text-input button.send-btn:hover {
-  background: var(--accent-hover);
+
+button.stop-btn {
+  background: transparent;
+  color: var(--text-main);
+  border: 1px solid var(--border-light);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+button.stop-btn:hover {
+  background: rgba(192, 57, 43, 0.15);
+  border-color: #c0392b;
 }
 
 .glasses-simulator-controls {
