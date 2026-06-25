@@ -247,8 +247,8 @@ export class AgentHomeController {
       this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
       return
     }
-    const shouldShowLoading = !options.preserveCurrentScreen && !options.skipLoading || this.state.screen === 'loading'
-    if (shouldShowLoading) {
+    const shouldShowLoading = !options.preserveCurrentScreen || this.state.screen === 'loading'
+    if (shouldShowLoading && !options.skipLoading) {
       this.setState({ screen: 'loading', message: 'Connecting to backend...' })
     }
     try {
