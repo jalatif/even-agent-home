@@ -296,3 +296,132 @@ test('stale openSession of a busy session still registers it for background poll
     globalThis.fetch = originalFetch
   }
 })
+
+test('stale openSessionsList result cannot overwrite a newer openSession', async () => {
+  // Coverage gap #1: the existing race test races openSession as the stale
+  // producer. This races openSessionsList as the stale producer: a stalled
+  // /sessions fetch must not overwrite the messages screen a newer openSession
+  // navigated to.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: true,
+    scrollSpeed: 'medium',
+  })
+
+  const originalFetch = globalThis.fetch
+  let releaseSessions!: () => void
+  const sessionsGate = new Promise<void>(resolve => { releaseSessions = resolve })
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/sessions')) {
+      await sessionsGate // stall the list fetch (stale producer)
+      return { ok: true, async json() { return { sessions: [{ id: 'stale-sess', title: 'Stale', timestamp: '2026-06-25T00:00:00.000Z' }] } } }
+    }
+    if (url.includes('/history')) {
+      return { ok: true, async json() { return { history: [{ role: 'assistant', text: 'real message' }] } } }
+    }
+    if (url.includes('/status')) {
+      return { ok: true, async json() { return { state: 'idle' } } }
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    const privateController = controller as unknown as {
+      openSession(agent: string, sessionId: string): Promise<void>
+      openSessionsList(agent: string): Promise<void>
+    }
+
+    // Start a sessions-list load, then supersede it with an openSession
+    // navigation before the list fetch resolves.
+    const staleList = privateController.openSessionsList('openclaw')
+    await Promise.resolve()
+    await privateController.openSession('openclaw', 'session-1')
+    releaseSessions()
+    await staleList
+
+    // The newer openSession (messages screen) must win.
+    assert.equal(controller.getState().screen, 'sidebar.messages')
+    assert.equal(controller.getState().sessionId, 'session-1')
+  } finally {
+    controller.dispose()
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('failed session-list reload restores the prior sidebar.agents screen', async () => {
+  // Coverage gap #2a: the existing restore test only covers the sidebar.messages
+  // branch. This covers the sidebar.agents branch of the previousState restore.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: true,
+    scrollSpeed: 'medium',
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => ({
+    ok: false, status: 502, statusText: 'Bad Gateway',
+    async json() { return { error: 'sessions failed' } },
+  })) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    ;(controller as unknown as { state: unknown }).state = {
+      screen: 'sidebar.agents',
+      agents: ['openclaw', 'codex'],
+      selectedAgentIndex: 0,
+    }
+    const privateController = controller as unknown as {
+      openSessionsList(agent: string): Promise<void>
+    }
+    await privateController.openSessionsList('openclaw')
+
+    // Should restore to the agents screen, not be stuck on loading.
+    assert.equal(controller.getState().screen, 'sidebar.agents')
+    assert.deepEqual((controller.getState() as { agents?: string[] }).agents, ['openclaw', 'codex'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('failed session-list reload restores the prior sidebar.sessions screen', async () => {
+  // Coverage gap #2b: the sidebar.sessions branch of the previousState restore.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: true,
+    scrollSpeed: 'medium',
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => ({
+    ok: false, status: 502, statusText: 'Bad Gateway',
+    async json() { return { error: 'sessions failed' } },
+  })) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    const priorSessions = [{ id: 'old-1', title: 'Old Session', state: 'idle' }]
+    ;(controller as unknown as { state: unknown }).state = {
+      screen: 'sidebar.sessions',
+      agent: 'openclaw',
+      sessions: priorSessions,
+      selectedSessionIndex: 0,
+    }
+    const privateController = controller as unknown as {
+      openSessionsList(agent: string): Promise<void>
+    }
+    await privateController.openSessionsList('openclaw')
+
+    assert.equal(controller.getState().screen, 'sidebar.sessions')
+    assert.deepEqual((controller.getState() as { sessions?: { id: string }[] }).sessions, priorSessions)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

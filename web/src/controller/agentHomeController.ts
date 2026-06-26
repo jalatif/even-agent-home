@@ -201,6 +201,21 @@ export class AgentHomeController {
     // We no longer stop polling so background tasks can complete.
   }
 
+  /**
+   * Tear down all timers/intervals. Safe to call multiple times. Production
+   * code rarely needs this (the controller lives for the app lifetime), but it
+   * is essential for tests so leaked poll/animation/scroll timers don't keep
+   * the test process alive. stopPolling() is intentionally a no-op (so
+   * background tasks can still complete), so dispose() is the only way to
+   * actually clear the intervals.
+   */
+  public dispose() {
+    if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null }
+    if (this.animationInterval) { clearInterval(this.animationInterval); this.animationInterval = null }
+    if (this.autoScrollInterval) { clearInterval(this.autoScrollInterval); this.autoScrollInterval = null }
+    if (this.turnTimeout) { clearTimeout(this.turnTimeout); this.turnTimeout = null }
+  }
+
   public subscribe(listener: StateListener) {
     this.listeners.add(listener)
     listener(this.state)
