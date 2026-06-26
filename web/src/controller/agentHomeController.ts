@@ -70,6 +70,7 @@ export class AgentHomeController {
   private backgroundTasks: Set<string> = new Set()
   private turnTimeout: ReturnType<typeof setTimeout> | null = null
   private bootRequestId = 0
+  private navigationRequestId = 0
   // Wall-clock timestamp (ms) the current agent turn started — i.e. when
   // isThinking flipped to true. Cleared (null) when the turn ends. Drives the
   // "Agent is working | Ns" elapsed counter in the messages footer.
@@ -303,9 +304,9 @@ export class AgentHomeController {
       if (this.state.screen === 'notification') {
         this.setState(this.state.previous || { screen: 'loading', message: 'Loading...' }, { renderBridge: true })
       } else if (this.state.screen === 'sidebar.messages' || this.state.screen === 'sidebarSending') {
-        this.openSessionsList(this.state.agent)
+        await this.openSessionsList(this.state.agent)
       } else if (this.state.screen === 'sidebar.sessions') {
-        this.boot({ skipLoading: true }) // Back to agents
+        await this.boot({ skipLoading: true }) // Back to agents
       } else if (this.state.screen === 'sidebar.agents' || this.state.screen === 'loading') {
         // `loading` is the root page at boot — it is the screen the user lands
         // on before any agent/session is open (and stays there whenever the
@@ -329,7 +330,7 @@ export class AgentHomeController {
 
     if (this.state.screen === 'notification') {
       if (input.type === 'press') {
-        this.openSession(this.state.agent, this.state.sessionId);
+        await this.openSession(this.state.agent, this.state.sessionId);
       }
       return;
     }
@@ -344,7 +345,7 @@ export class AgentHomeController {
       } else if (input.type === 'press') {
         const index = input.index ?? this.state.selectedAgentIndex
         const agent = this.state.agents[index]
-        if (agent) this.openSessionsList(agent)
+        if (agent) await this.openSessionsList(agent)
       }
     } 
     else if (this.state.screen === 'sidebar.sessions') {
@@ -358,9 +359,9 @@ export class AgentHomeController {
         const index = input.index ?? this.state.selectedSessionIndex
         const session = this.state.sessions[index]
         if (index === 0 || !session) {
-          this.openSession(this.state.agent, '') // New session
+          await this.openSession(this.state.agent, '') // New session
         } else {
-          this.openSession(this.state.agent, session.id)
+          await this.openSession(this.state.agent, session.id)
         }
       }
     }
@@ -398,19 +399,20 @@ export class AgentHomeController {
         this.setState({ ...this.state, selectedIndex: this.state.selectedIndex === 0 ? 1 : 0 })
       } else if (input.type === 'press') {
         if (this.state.transcriptError) {
-          this.openSession(this.state.agent, this.state.sessionId)
+          await this.openSession(this.state.agent, this.state.sessionId)
           return
         }
         if (this.state.selectedIndex === 0) {
-          this.sendMessage()
+          await this.sendMessage()
         } else {
-          this.openSession(this.state.agent, this.state.sessionId)
+          await this.openSession(this.state.agent, this.state.sessionId)
         }
       }
     }
   }
 
   private async openSession(agent: string, sessionId: string) {
+    const requestId = ++this.navigationRequestId
     this.setState({ screen: 'loading', message: 'Loading messages...' })
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -445,6 +447,7 @@ export class AgentHomeController {
         initialScrollOffset = calculateInitialScrollOffset(messages, agent)
       }
       
+      if (requestId !== this.navigationRequestId) return
       this.setState({ screen: 'sidebar.messages', agent, sessionId, messages, scrollOffset: initialScrollOffset, isThinking, agentError })
       
       if (this.autoScrollInterval) {
@@ -477,12 +480,15 @@ export class AgentHomeController {
       this.startPolling()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
+      if (requestId !== this.navigationRequestId) return
       console.error("openSession error:", err.message, err.stack);
-      this.openSessionsList(agent)
+      await this.openSessionsList(agent)
     }
   }
 
   private async openSessionsList(agent: string) {
+    const requestId = ++this.navigationRequestId
+    const previousState = this.state
     this.setState({ screen: 'loading', message: `Loading ${agent}...` })
     try {
       const api = getApi()
@@ -491,15 +497,21 @@ export class AgentHomeController {
       const sessions = rawSessions
         .filter(s => s.title && s.title !== 'Session' && s.title.trim() !== '')
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      if (requestId !== this.navigationRequestId) return
       this.setState({ screen: 'sidebar.sessions', agent, sessions: [{ id: '', title: '+ New Session', state: 'idle' }, ...sessions], selectedSessionIndex: 0 })
     } catch (e) {
+      if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
       // On error, go back to the agents list directly instead of calling
       // boot() which re-fetches everything and can create a loop.
-      if (this.state.agents?.length > 0) {
-        this.setState({ screen: 'sidebar.agents', agents: this.state.agents, selectedAgentIndex: this.state.selectedAgentIndex || 0 }, { renderBridge: true })
+      if (previousState.screen === 'sidebar.messages' || previousState.screen === 'sidebarSending') {
+        this.setState(previousState, { renderBridge: true })
+      } else if (previousState.screen === 'sidebar.agents') {
+        this.setState(previousState, { renderBridge: true })
+      } else if (previousState.screen === 'sidebar.sessions') {
+        this.setState(previousState, { renderBridge: true })
       } else {
-        this.boot()
+        await this.boot()
       }
     }
   }
@@ -588,13 +600,13 @@ export class AgentHomeController {
   private async sendMessage() {
     if (this.state.screen !== 'sidebarConfirm') return
     if (this.state.transcriptError) {
-      this.openSession(this.state.agent, this.state.sessionId)
+      await this.openSession(this.state.agent, this.state.sessionId)
       return
     }
     const text = this.state.transcript || ''
     const trimmed = text.trim();
     if (!trimmed || /^\.+$/.test(trimmed)) {
-      this.openSession(this.state.agent, this.state.sessionId)
+      await this.openSession(this.state.agent, this.state.sessionId)
       return
     }
 
@@ -617,6 +629,8 @@ export class AgentHomeController {
       const config = configs[agent]
 
       const res = await getApi().prompt(agent, sessionId, text, config?.model, config?.thinking, apiConfig.yolo)
+      const currentState = this.getState()
+      if (currentState.screen !== 'sidebarSending' || currentState.agent !== agent || currentState.transcript !== text) return
       // Stay on messages screen with local user message — polling will update with response
       if (this.turnTimeout) clearTimeout(this.turnTimeout)
       const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
@@ -628,7 +642,7 @@ export class AgentHomeController {
       this.setState({ screen: 'sidebar.messages', agent, sessionId: res.sessionId || sessionId, messages: updatedMessages, scrollOffset: 0, isThinking: true, agentError: undefined }, { renderBridge: true })
     } catch (e) {
       console.error('[sendMessage]', agent, e)
-      this.openSession(agent, sessionId)
+      await this.openSession(agent, sessionId)
     }
   }
 
@@ -656,6 +670,8 @@ export class AgentHomeController {
       const config = configs[agent]
 
       const res = await getApi().prompt(agent, sessionId, text, config?.model, config?.thinking, apiConfig.yolo)
+      const currentState = this.getState()
+      if (currentState.screen !== 'sidebarSending' || currentState.agent !== agent || currentState.transcript !== text) return
       // Stay on messages screen with local user message — polling will update with response
       if (this.turnTimeout) clearTimeout(this.turnTimeout)
       const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
@@ -667,7 +683,7 @@ export class AgentHomeController {
       this.setState({ screen: 'sidebar.messages', agent, sessionId: res.sessionId || sessionId, messages: updatedMessages, scrollOffset: 0, isThinking: true, agentError: undefined }, { renderBridge: true })
     } catch (e) {
       console.error('[sendTextMessage]', agent, e)
-      this.openSession(agent, sessionId)
+      await this.openSession(agent, sessionId)
     }
   }
 
