@@ -13,6 +13,7 @@ import { AgentHomeController } from './controller/agentHomeController'
 import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import { registerBridgeStorage } from './storage'
+import { isBackendConfigured } from './configHelpers'
 import './style.css'
 
 function formatModelName(m: string): string {
@@ -229,6 +230,19 @@ export default function App() {
         // Boot now reads the fully-hydrated config (baseUrl + token restored
         // from the bridge KV store), so agents load automatically on startup.
         ctrl.boot()
+
+        // The settings UI's agents/models list is populated by the
+        // refreshAgentsAndModels effect (dep: agentRefreshNonce). Its initial
+        // mount run fired BEFORE the bridge KV store was consulted, so it
+        // read the empty pre-hydration config and `getAgents()` failed
+        // silently — leaving the settings agent list empty until the user
+        // clicked Save (which bumped the nonce). Now that the config is
+        // hydrated, bump the nonce to re-trigger that effect so the settings
+        // list populates on startup without a manual Save. Only bump when the
+        // config is usable, else the refresh would fail silently again.
+        if (isBackendConfigured(hydratedConfig)) {
+          setAgentRefreshNonce(n => n + 1)
+        }
       })()
     })
 
