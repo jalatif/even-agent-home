@@ -279,9 +279,19 @@ function buildArgs(text, piSessionId, model, thinking) {
     }
 
     async function prompt(phoneSessionId, text, cwd, model, thinking, yolo) {
-        let resolvedDir = cwd || process.env.PROJECT_DIR || process.cwd();
-
         const existing = phoneSessionId ? getSession(phoneSessionId) : null;
+
+        // Reuse the cwd we already pinned for this session on a prior turn
+        // (set either from the JSONL header below or from the caller). Without
+        // this, the second+ message re-derives resolvedDir from the request/
+        // backend cwd — which usually differs from the session's original
+        // project — and pi responds with its interactive "Fork this session?"
+        // prompt. stdin is set to "ignore", so pi reads EOF (= "N"), produces
+        // no output, and the turn surfaces as "Agent Error".
+        let resolvedDir = existing?.cwd
+            || cwd
+            || process.env.PROJECT_DIR
+            || process.cwd();
 
         // When resuming an existing session (not in our local map), use its
         // stored cwd from the JSONL header so pi doesn't ask to fork when
