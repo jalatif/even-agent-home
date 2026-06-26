@@ -518,6 +518,13 @@ export function createOpenClawProvider(emit) {
         } catch (err) {
             session.busy = false;
             session.abortController = null;
+            // Match the success path: clear any streamed-but-uncommitted
+            // partial text. Without this, a failed/aborted turn leaves
+            // session.partialText populated, and the NEXT prompt() flips
+            // busy=true before its first delta arrives — getHistory() then
+            // appends the dead turn's fragments as the new turn's in-progress
+            // reply.
+            session.partialText = "";
             if (err.name === "AbortError") {
                 emit(sessionId, { type: "status", state: "idle" });
             } else {

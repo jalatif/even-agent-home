@@ -114,6 +114,16 @@ let failed = 0;
 const ok = (name) => { passed++; console.log(`  ✔ ${name}`); };
 const bad = (name, err) => { failed++; console.error(`  ✘ ${name}: ${err?.stack ?? err}`); };
 const section = (label) => console.log(`\n── ${label} ──`);
+async function waitFor(predicate, label, timeoutMs = 1000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastValue;
+    while (Date.now() < deadline) {
+        lastValue = predicate();
+        if (lastValue) return lastValue;
+        await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.fail(`Timed out waiting for ${label}; last=${JSON.stringify(lastValue)}`);
+}
 
 // ── Set env BEFORE loading the provider so the eager initial sync sees them ──
 const baseEnv = {
@@ -366,6 +376,7 @@ section("prompt() — streaming SSE + history + status + headers");
         assert.equal(body.user, sid);
         assert.equal(body.stream, true);
         assert.deepEqual(body.messages, [{ role: "user", content: "Say hello" }]);
+        await waitFor(() => events.filter((e) => e.msg.type === "text_delta").length === 3, "streaming text_delta events");
         const deltas = events.filter((e) => e.msg.type === "text_delta").map((e) => e.msg.text);
         assert.deepEqual(deltas, ["hello", " world", "!"]);
         const resultEvent = events.find((e) => e.msg.type === "result");
@@ -420,10 +431,42 @@ section("prompt() — non-streaming response (no body.getReader)");
         const events = [];
         const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
         await provider.prompt("sid-nonsse", "ping", undefined, "openclaw/main");
+        await waitFor(() => events.some((e) => e.msg.type === "text_delta"), "non-streaming text_delta");
         const deltas = events.filter((e) => e.msg.type === "text_delta").map((e) => e.msg.text);
         assert.deepEqual(deltas, ["single shot"]);
         assert.equal(provider.getHistory("sid-nonsse", 10)[1].text, "single shot");
         ok("non-streaming response: one text_delta with full text, history captured");
+        provider.dispose();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+}
+
+section("prompt() — JSON chat completion with readable body");
+{
+    const encoder = new TextEncoder();
+    const bodyText = JSON.stringify({ choices: [{ message: { content: "json body reply" } }] });
+    const chunks = [bodyText];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        status: 200,
+        body: { getReader() {
+            return { async read() {
+                if (chunks.length === 0) return { done: true, value: undefined };
+                return { done: false, value: encoder.encode(chunks.shift()) };
+            } };
+        } },
+    });
+    try {
+        const events = [];
+        const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
+        await provider.prompt("sid-readable-json", "ping", undefined, "openclaw/main");
+        await waitFor(() => events.some((e) => e.msg.type === "text_delta"), "readable JSON text_delta");
+        const deltas = events.filter((e) => e.msg.type === "text_delta").map((e) => e.msg.text);
+        assert.deepEqual(deltas, ["json body reply"]);
+        assert.equal(provider.getHistory("sid-readable-json", 10)[1].text, "json body reply");
+        ok("readable JSON chat-completions body is captured as an assistant reply");
         provider.dispose();
     } finally {
         globalThis.fetch = originalFetch;
@@ -438,6 +481,7 @@ section("prompt() — 404 surfaces the chat-completions enablement hint");
         const events = [];
         const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
         await provider.prompt("sid-404", "hi");
+        await waitFor(() => events.some((e) => e.msg.type === "error"), "404 error event");
         const err = events.find((e) => e.msg.type === "error");
         assert.match(err.msg.value, /chat\/completions is disabled/);
         assert.match(err.msg.value, /endpoints\.chatCompletions\.enabled/);
@@ -456,6 +500,7 @@ section("prompt() — 500 surfaces status code without the hint");
         const events = [];
         const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
         await provider.prompt("sid-500", "hi");
+        await waitFor(() => events.some((e) => e.msg.type === "error"), "500 error event");
         const err = events.find((e) => e.msg.type === "error");
         assert.match(err.msg.value, /OpenClaw gateway error 500/);
         assert.doesNotMatch(err.msg.value, /chat\/completions is disabled/);
@@ -540,6 +585,66 @@ section("getHistory() — in-flight partial text included during busy turn");
         assert.equal(partial.text, "part1 part2");
         await p;
         ok("getHistory during busy turn includes the partial assistant text");
+        provider.dispose();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+}
+
+section("getHistory() — stale partial text from a failed turn does not leak into the next turn");
+{
+    // Regression: runPrompt's catch used to leave session.partialText populated
+    // after a failed/aborted turn. getHistory() only appends partialText while
+    // the session is busy, so the phantom did not show after the turn ended —
+    // but it DID leak into the NEXT turn: the next prompt() flips busy=true
+    // before its first delta arrives, and getHistory during that window
+    // appended the dead turn's "doomed partial" as the new turn's in-progress
+    // reply. After the fix the catch clears partialText, so a freshly-started
+    // turn shows no assistant text until it actually streams something.
+    const encoder = new TextEncoder();
+    const originalFetch = globalThis.fetch;
+    let mode = "fail-after-delta"; // "fail-after-delta" | "stall"
+    globalThis.fetch = async () => {
+        if (mode === "fail-after-delta") {
+            let firstRead = true;
+            return {
+                ok: true, status: 200, body: { getReader() { return { async read() {
+                    if (firstRead) {
+                        firstRead = false;
+                        return { done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"doomed partial"}}]}\n\n') };
+                    }
+                    throw new Error("gateway stream broke");
+                } }; } },
+            };
+        }
+        // mode === "stall": never resolves a chunk, so turn 2 stays busy with
+        // no deltas — exactly the window where stale partialText would leak.
+        return {
+            ok: true, status: 200, body: { getReader() { return { async read() {
+                return new Promise(() => {});
+            } }; } },
+        };
+    };
+    try {
+        const events = [];
+        const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
+
+        // Turn 1: streams one delta, then fails.
+        const p1 = provider.prompt("leak-sid", "go");
+        await waitFor(() => events.some((e) => e.msg.type === "error"), "turn-1 stream-error event");
+        await p1;
+        assert.equal(provider.getSessionStatus("leak-sid"), "idle");
+
+        // Turn 2: starts busy but stalls before emitting any delta. This is the
+        // window where the un-cleared partialText from turn 1 would bleed in.
+        mode = "stall";
+        provider.prompt("leak-sid", "again");
+        await waitFor(() => provider.getSessionStatus("leak-sid") === "busy", "turn-2 busy");
+        const hist = provider.getHistory("leak-sid", 10);
+        const assistantRows = hist.filter((x) => x.role === "assistant");
+        assert.deepEqual(assistantRows, [],
+            `no stale assistant text from turn 1 in turn 2's busy window, got ${JSON.stringify(hist)}`);
+        ok("failed turn clears partialText — next turn shows no stale partial reply");
         provider.dispose();
     } finally {
         globalThis.fetch = originalFetch;
