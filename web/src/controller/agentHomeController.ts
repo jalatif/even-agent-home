@@ -502,8 +502,14 @@ export class AgentHomeController {
     } catch (e) {
       if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
-      // On error, go back to the agents list directly instead of calling
-      // boot() which re-fetches everything and can create a loop.
+      // On error, restore the screen the user was actually on. Direct entry
+      // points (doublePress from messages, agents-list press) capture a real
+      // screen here. The 'loading' screen is a TRANSIENT state set by a caller
+      // (openSession's catch calls us): in that case there is no real prior
+      // screen to restore — both the session load and this list reload failed —
+      // so we fall through to boot() to land on the agents list (a different,
+      // likely-reachable endpoint) rather than restoring a dead 'loading'
+      // screen. We do not boot-loop because boot() fetches a fresh agents list.
       if (previousState.screen === 'sidebar.messages' || previousState.screen === 'sidebarSending') {
         this.setState(previousState, { renderBridge: true })
       } else if (previousState.screen === 'sidebar.agents') {
@@ -511,7 +517,8 @@ export class AgentHomeController {
       } else if (previousState.screen === 'sidebar.sessions') {
         this.setState(previousState, { renderBridge: true })
       } else {
-        await this.boot()
+        // 'loading' or any other transient screen → go to agents list.
+        this.boot()
       }
     }
   }
