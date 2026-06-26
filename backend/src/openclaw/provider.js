@@ -111,6 +111,17 @@ function responseTextFromChoice(choice) {
     return "";
 }
 
+function responseTextFromChatCompletionPayload(text) {
+    if (!text || !text.trim()) return "";
+    try {
+        const parsed = JSON.parse(text);
+        const choice = parsed.choices?.[0];
+        return responseTextFromChoice(choice) || choice?.delta?.content || "";
+    } catch {
+        return "";
+    }
+}
+
 // Normalize a single session record from `openclaw sessions --all-agents
 // --json` into the shape the route layer expects.
 function normalizeSessionRow(row) {
@@ -390,6 +401,18 @@ export function createOpenClawProvider(emit) {
         emit(sessionId, { type: "status", state: "busy" });
         session.messages.push({ role: "user", content: text });
 
+        runPrompt(session, sessionId, model, thinking);
+        return { sessionId, provider: "openclaw" };
+    }
+
+    // runPrompt is invoked fire-and-forget from prompt() (prompt returns the
+    // sessionId immediately while streaming continues). Because it is never
+    // awaited, it MUST NOT produce an unhandled rejection: every code path —
+    // including header/gateway resolution before the fetch — is wrapped in the
+    // try below so any throw is funneled into the same error/cleanup path as a
+    // streaming failure.
+    async function runPrompt(session, sessionId, model, thinking) {
+        try {
         const agentId = agentIdFromModel(model);
         const gateway = resolveOpenClawGatewayConfig();
         const headers = {
@@ -399,8 +422,6 @@ export function createOpenClawProvider(emit) {
         };
         if (gateway.authSecret) headers.Authorization = `Bearer ${gateway.authSecret}`;
         if (thinking && thinking !== "off") headers["x-openclaw-thinking-level"] = String(thinking);
-
-        try {
             const response = await fetch(`${gateway.url}/v1/chat/completions`, {
                 method: "POST",
                 headers,
@@ -426,10 +447,13 @@ export function createOpenClawProvider(emit) {
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = "";
+                let rawBody = "";
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
+                    const chunk = decoder.decode(value, { stream: true });
+                    rawBody += chunk;
+                    buffer += chunk;
                     const lines = buffer.split("\n");
                     buffer = lines.pop() || "";
                     for (const line of lines) {
@@ -448,6 +472,28 @@ export function createOpenClawProvider(emit) {
                         } catch {}
                     }
                 }
+                const trailing = buffer.trim();
+                if (trailing.startsWith("data: ")) {
+                    const payload = trailing.slice(6);
+                    if (payload !== "[DONE]") {
+                        try {
+                            const parsed = JSON.parse(payload);
+                            const delta = parsed.choices?.[0]?.delta?.content;
+                            if (delta) {
+                                fullResponse += delta;
+                                session.partialText = fullResponse;
+                                emit(sessionId, { type: "text_delta", text: delta });
+                            }
+                        } catch {}
+                    }
+                }
+                if (!fullResponse) {
+                    fullResponse = responseTextFromChatCompletionPayload(rawBody);
+                    if (fullResponse) {
+                        session.partialText = fullResponse;
+                        emit(sessionId, { type: "text_delta", text: fullResponse });
+                    }
+                }
             } else {
                 const data = await response.json();
                 fullResponse = responseTextFromChoice(data.choices?.[0]);
@@ -461,6 +507,7 @@ export function createOpenClawProvider(emit) {
             session.busy = false;
             session.abortController = null;
             session.partialText = "";
+            session.lastError = undefined;
             // A new chat happened; trigger an immediate refresh so the
             // sessions list picks up the new entry without waiting for
             // the 15s interval timer. Don't null the cache — the old
@@ -468,7 +515,6 @@ export function createOpenClawProvider(emit) {
             refreshSessionCache();
             emit(sessionId, { type: "result", success: true, text: fullResponse, provider: "openclaw" });
             emit(sessionId, { type: "status", state: "idle" });
-            return { sessionId, provider: "openclaw" };
         } catch (err) {
             session.busy = false;
             session.abortController = null;
@@ -479,14 +525,15 @@ export function createOpenClawProvider(emit) {
                 emit(sessionId, { type: "status", state: "idle" });
                 session.lastError = err.message;
             }
-            return { sessionId, provider: "openclaw" };
         }
     }
 
     function getStatus(sessionId) {
         const s = getSession(sessionId);
         if (!s) return null;
-        return { state: s.busy ? "busy" : "idle", provider: "openclaw", error: s.lastError || undefined };
+        const status = { state: s.busy ? "busy" : "idle", provider: "openclaw" };
+        if (s.lastError) status.error = s.lastError;
+        return status;
     }
 
     function getSessionStatus(sessionId) {
