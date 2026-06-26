@@ -446,15 +446,29 @@ export class AgentHomeController {
       if (config.autoScrollLastExchange !== false && messages.length > 0) {
         initialScrollOffset = calculateInitialScrollOffset(messages, agent)
       }
-      
+
+      // Register a busy session for background polling BEFORE the stale guard.
+      // The visible-screen setState below is correctly guarded (a stale result
+      // must not overwrite a newer navigation), but background task tracking
+      // must not be: if the user navigated away mid-load, the stale guard used
+      // to skip backgroundTasks.add(), so a busy session was never tracked —
+      // its completion wouldn't surface a notification until the 2s discovery
+      // poll re-found it (and only if its agent was still in enabledAgents).
+      // startPolling() stays below the guard: it is global and idempotent, and
+      // boot() already starts it; calling it on the stale path would leak an
+      // interval in callers (and tests) that never dispose.
+      if (isThinking) {
+         this.backgroundTasks.add(`${agent}::${sessionId}`)
+      }
+
       if (requestId !== this.navigationRequestId) return
       this.setState({ screen: 'sidebar.messages', agent, sessionId, messages, scrollOffset: initialScrollOffset, isThinking, agentError })
-      
+
       if (this.autoScrollInterval) {
         clearInterval(this.autoScrollInterval)
         this.autoScrollInterval = null
       }
-      
+
       if (initialScrollOffset > 0 && config.autoScrollLastExchange !== false) {
         const speedMs = getScrollSpeedMs(config.scrollSpeed)
 
@@ -464,7 +478,7 @@ export class AgentHomeController {
             this.autoScrollInterval = null
             return
           }
-          
+
           if (this.state.scrollOffset > 0) {
             this.setState({ ...this.state, scrollOffset: this.state.scrollOffset - 1 }, { renderBridge: true, partialRender: true })
           } else {
@@ -474,9 +488,6 @@ export class AgentHomeController {
         }, speedMs)
       }
 
-      if (isThinking) {
-         this.backgroundTasks.add(`${agent}::${sessionId}`)
-      }
       this.startPolling()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
