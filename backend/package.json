@@ -18,7 +18,10 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "even-agent-home": "node bin/even-agent-home.js"
+    "even-agent-home": "node bin/even-agent-home.js",
+    "test": "node ../scripts/test-openclaw-provider.mjs && node ../scripts/test-pi-session-cwd-reuse.mjs",
+    "test:openclaw": "node ../scripts/test-openclaw-provider.mjs",
+    "test:pi-cwd": "node ../scripts/test-pi-session-cwd-reuse.mjs"
   },
   "keywords": [
     "ai",

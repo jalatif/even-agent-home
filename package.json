@@ -1,0 +1,16 @@
+{
+  "name": "even-agent-home-monorepo",
+  "version": "1.0.8",
+  "private": true,
+  "description": "Agent Home — multi-provider AI agent bridge for Even Realities glasses. Monorepo root: orchestrates the backend (backend/) and web (web/) packages.",
+  "scripts": {
+    "test:backend": "npm --prefix backend test",
+    "test:web": "npm --prefix web run test:unit",
+    "test": "npm run test:backend && npm run test:web",
+    "start": "npm --prefix backend start"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
