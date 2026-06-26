@@ -6,9 +6,8 @@ import { fileURLToPath } from "node:url";
 import { execSync, spawn } from "node:child_process";
 import qrcodeTerminal from "qrcode-terminal";
 
-const mainPort = parseInt(process.env.PORT || "3456", 10);
 export const CODEX_APP_SERVER_PORT = parseInt(
-    process.env.CODEX_APP_SERVER_PORT || (mainPort === 8765 ? "8766" : "8765"),
+    process.env.CODEX_APP_SERVER_PORT || "8766",
     10
 );
 
