@@ -561,6 +561,75 @@ section("interrupt() — mid-stream aborts, flips status to idle");
     }
 }
 
+section("interrupt() + re-prompt — stale turn's late deltas do not leak onto the new turn");
+{
+    // Regression: interrupt() aborts the fetch, but the old runPrompt may still
+    // be draining its reader when a new prompt() starts. Without a turn token,
+    // the old turn's late text_delta/result events emitted onto the session
+    // AFTER the new turn began would interleave with the new turn's output. The
+    // fix (turn token) makes the stale turn detect it no longer owns the
+    // session and drop its late events.
+    const encoder = new TextEncoder();
+    const originalFetch = globalThis.fetch;
+    // Each fetch returns a reader whose read() is gated by an external
+    // resolve, so we can interleave turns deterministically.
+    let turn1Late = null; // resolve to deliver turn 1's stale delta
+    let turn2Resolve = null;
+    let callCount = 0;
+    globalThis.fetch = async () => {
+        callCount += 1;
+        const myCall = callCount;
+        if (myCall === 1) {
+            // Turn 1: one delta, then stall until we resolve turn1Late (simulating
+            // a slow gateway that delivers more data AFTER the user interrupted).
+            let sentFirst = false;
+            return {
+                ok: true, status: 200, body: { getReader() { return { async read() {
+                    if (!sentFirst) { sentFirst = true; return { done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"turn1 start"}}]}\n\n') }; }
+                    return new Promise((resolve) => { turn1Late = () => resolve({ done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"turn1 LATE LEAK"}}]}\n\n') }); });
+                } }; } },
+            };
+        }
+        // Turn 2: deliver its own delta on resolve.
+        return {
+            ok: true, status: 200, body: { getReader() { return { async read() {
+                return new Promise((resolve) => { turn2Resolve = () => resolve({ done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"turn2 real"}}]}\n\n') }); });
+            } }; } },
+        };
+    };
+    try {
+        const events = [];
+        const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
+
+        // Turn 1: streams "turn1 start", then stalls mid-stream.
+        const p1 = provider.prompt("race-sid", "one");
+        await waitFor(() => events.some((e) => e.msg.type === "text_delta" && e.msg.text === "turn1 start"), "turn1 first delta");
+
+        // User interrupts and immediately starts turn 2.
+        provider.interrupt("race-sid");
+        const p2 = provider.prompt("race-sid", "two");
+        await waitFor(() => typeof turn2Resolve === "function", "turn2 reader ready");
+
+        // Now turn 1's gateway belatedly delivers its stale delta. With the
+        // race, this would emit "turn1 LATE LEAK" onto turn 2.
+        turn1Late();
+        // Deliver turn 2's real delta and end it.
+        turn2Resolve();
+        await p1.catch(() => {}); // turn 1's fetch rejects (aborted) or returns stale
+        await p2;
+
+        const deltas = events.filter((e) => e.msg.type === "text_delta").map((e) => e.msg.text);
+        assert.ok(!deltas.includes("turn1 LATE LEAK"),
+            `stale turn-1 delta must not leak onto turn 2; deltas=${JSON.stringify(deltas)}`);
+        assert.ok(deltas.includes("turn2 real"),
+            `turn 2's own delta must be present; deltas=${JSON.stringify(deltas)}`);
+        ok("interrupt + re-prompt: stale turn's late deltas are dropped (turn token guard)");
+        provider.dispose();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+}
+
 section("getHistory() — in-flight partial text included during busy turn");
 {
     const encoder = new TextEncoder();

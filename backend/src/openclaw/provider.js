@@ -390,9 +390,17 @@ export function createOpenClawProvider(emit) {
             partialText: "",
             abortController: null,
             lastError: undefined,
+            turnToken: 0,
         };
         session.busy = true;
         session.abortController = new AbortController();
+        // Stamp this turn so the fire-and-forget runPrompt can tell whether a
+        // newer prompt() (or interrupt()) has invalidated it. Without this, an
+        // aborted-but-still-draining old turn can emit text_delta/result onto
+        // the session after a new turn has started — interleaving the two
+        // turns' output. runPrompt captures the token and re-checks it before
+        // every emit/state mutation; interrupt() bumps it to void the old turn.
+        const turnToken = (session.turnToken = (session.turnToken || 0) + 1);
 
         const sessionId = session.id;
         if (!sessions.has(sessionId)) sessions.set(sessionId, session);
@@ -401,7 +409,7 @@ export function createOpenClawProvider(emit) {
         emit(sessionId, { type: "status", state: "busy" });
         session.messages.push({ role: "user", content: text });
 
-        runPrompt(session, sessionId, model, thinking);
+        runPrompt(session, sessionId, turnToken, model, thinking);
         return { sessionId, provider: "openclaw" };
     }
 
@@ -411,7 +419,13 @@ export function createOpenClawProvider(emit) {
     // including header/gateway resolution before the fetch — is wrapped in the
     // try below so any throw is funneled into the same error/cleanup path as a
     // streaming failure.
-    async function runPrompt(session, sessionId, model, thinking) {
+    //
+    // `turnToken` is the value prompt() stamped on the session for THIS turn.
+    // interrupt() and a subsequent prompt() both bump session.turnToken, so a
+    // stale draining turn can detect (via isCurrentTurn) that it no longer
+    // owns the session and stop mutating state / emitting onto the new turn.
+    async function runPrompt(session, sessionId, turnToken, model, thinking) {
+        const isCurrentTurn = () => session.turnToken === turnToken;
         try {
         const agentId = agentIdFromModel(model);
         const gateway = resolveOpenClawGatewayConfig();
@@ -464,7 +478,7 @@ export function createOpenClawProvider(emit) {
                         try {
                             const parsed = JSON.parse(payload);
                             const delta = parsed.choices?.[0]?.delta?.content;
-                            if (delta) {
+                            if (delta && isCurrentTurn()) {
                                 fullResponse += delta;
                                 session.partialText = fullResponse;
                                 emit(sessionId, { type: "text_delta", text: delta });
@@ -472,6 +486,7 @@ export function createOpenClawProvider(emit) {
                         } catch {}
                     }
                 }
+                if (!isCurrentTurn()) return;
                 const trailing = buffer.trim();
                 if (trailing.startsWith("data: ")) {
                     const payload = trailing.slice(6);
@@ -503,6 +518,7 @@ export function createOpenClawProvider(emit) {
                 }
             }
 
+            if (!isCurrentTurn()) return;
             if (fullResponse) session.messages.push({ role: "assistant", content: fullResponse });
             session.busy = false;
             session.abortController = null;
@@ -516,6 +532,10 @@ export function createOpenClawProvider(emit) {
             emit(sessionId, { type: "result", success: true, text: fullResponse, provider: "openclaw" });
             emit(sessionId, { type: "status", state: "idle" });
         } catch (err) {
+            // If a newer turn (or interrupt) owns the session now, this turn's
+            // drain is stale: do not touch session state or emit. The newer
+            // turn is responsible for its own status/idle transitions.
+            if (!isCurrentTurn()) return;
             session.busy = false;
             session.abortController = null;
             // Match the success path: clear any streamed-but-uncommitted
@@ -640,9 +660,20 @@ export function createOpenClawProvider(emit) {
         const s = getSession(sessionId);
         try { s?.abortController?.abort(); } catch {}
         if (s) {
+            // Bump the turn token so a still-draining runPrompt for the aborted
+            // turn detects (isCurrentTurn === false) that it no longer owns the
+            // session and stops emitting. Without this, the aborted turn's
+            // late text_delta/result events could land on a new turn started
+            // immediately after.
+            s.turnToken = (s.turnToken || 0) + 1;
             s.busy = false;
             s.abortController = null;
             s.partialText = "";
+            // The aborted turn's catch will no-op on staleness, so emit the
+            // idle transition ourselves to preserve the "interrupt → idle"
+            // guarantee for subscribed clients (and getStatus() reflects it
+            // immediately via s.busy=false above).
+            emit(sessionId, { type: "status", state: "idle" });
         }
     }
 
