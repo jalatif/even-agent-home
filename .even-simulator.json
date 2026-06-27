@@ -1,0 +1,4 @@
+{
+  "testRoot": "scripts",
+  "appEventPrefix": "[AgentHomeTest]"
+}
