@@ -8,6 +8,7 @@ import {
   hydrateApiConfig,
   hydrateAgentConfigs,
   refreshActiveConfigView,
+  AgentHomeApi,
 } from './api'
 import type { AgentProviderConfig, AuthConfig } from './api'
 import { AgentHomeController } from './controller/agentHomeController'
@@ -326,7 +327,6 @@ export default function App() {
       const baseUrl = parsed?.baseUrl ?? modalConnection.trim()
       const token = modalToken.trim()
       if (!baseUrl || !token) throw new Error('URL and token are required')
-      const { AgentHomeApi } = await import('./api')
       const api = new AgentHomeApi({ baseUrl, token })
       await api.getAgents()
       setModalTestResult({ ok: true, message: 'Reachable — agents list loaded' })
