@@ -5,15 +5,18 @@ phone settings UI and the glasses state-machine renderer.
 
 ## Responsibilities
 
-- Pair the app with the bridge by storing Backend URL + Secure Token.
-- Persist settings through the Even Hub bridge storage API, with browser
-  `localStorage` only as a development fallback.
-- Let users enable/disable agents and choose per-agent model/thinking settings.
+- Manage **multiple backends** in a registry: each backend is a name + Backend
+  URL/port + Secure Token + per-backend agent config + per-backend app prefs.
+  One backend is **active** at a time (= last connected); the app boots onto it.
+- Persist the registry through the Even Hub bridge storage API (single KV key
+  `backends`), with browser `localStorage` only as a development fallback.
+- Let users connect / switch / edit / remove backends from Settings, and
+  enable/disable agents + choose per-agent model/thinking for the active backend.
 - Render the glasses UI through `EvenHubGlassesBridge`.
 - Send voice PCM to the backend `/api/transcribe` endpoint. STT provider
   selection and API keys are backend-only.
 
-## Current Connection Flow
+## Multi-Backend Connection Flow
 
 The backend prints a `Connect URL` such as:
 
@@ -21,9 +24,18 @@ The backend prints a `Connect URL` such as:
 http://192.168.6.11:3456?token=...
 ```
 
-Paste the full URL into Settings. `parseConnectionUrl()` splits it into
-`baseUrl` and `token`. QR/camera scanning is intentionally not implemented:
-Even Hub plugin WebViews do not expose phone camera capture APIs.
+In Settings, **Connect New Backend** opens a modal with Name + Connection +
+Token fields. The Connection field accepts either the full URL above (auto-split
+into `baseUrl` + `token` via `parseConnectionUrl()`) **or** a plain `host:port`
+with the token entered separately. Connecting a backend makes it active. The
+Backends list shows all connected backends; clicking another one switches to it
+immediately and re-connects. The last-connected backend auto-connects on startup.
+Existing single-backend installs are auto-imported as one named backend on
+upgrade. QR/camera scanning is intentionally not implemented: Even Hub plugin
+WebViews do not expose phone camera capture APIs.
+
+See `docs/superpowers/specs/2026-06-28-multi-backend-design.md` for the full
+design.
 
 ## Model Defaults
 
@@ -44,7 +56,7 @@ npm run test:unit
 npm run test:simulator
 ```
 
-`test:unit` covers bridge/storage regressions. `test:simulator` validates the
-glasses state-machine and structural render invariants. Backend-integrated
-polling behavior is covered by scripts in the repo root, especially
-`scripts/test-polling-controller.mjs`.
+`test:unit` covers bridge/storage regressions and the multi-backend registry
+(`test/backends.test.ts`). `test:simulator` validates the glasses state-machine
+and structural render invariants. Backend-integrated polling behavior is covered
+by scripts in the repo root, especially `scripts/test-polling-controller.mjs`.

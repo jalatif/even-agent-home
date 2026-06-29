@@ -11,7 +11,7 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
   - Glasses UI: Renders `screenModel` using `@evenrealities/even_hub_sdk`. Uses `rebuildPageContainer` for full screen transitions and `textContainerUpgrade` (via `enqueueSidebarPanel`) for high-frequency partial renders (animations, scrolling) to prevent main-thread UI freezing.
   - Phone UI: React DOM application for initial pairing, configuration, and agent toggle settings.
 - **State Management**: Shared controller maintaining finite state machine for screens (Pairing, Agent Selection, Session List, Chat/Message View, Recording, Transcribing, Confirmation).
-- **Network**: Connects to the single unified backend over HTTP/SSE. Stores pairing details (URL, Secure Token) through the Even Hub bridge storage API; browser `localStorage` is only a development fallback.
+- **Network**: Connects to one backend at a time over HTTP/SSE, but supports **multiple saved backends**. The phone UI maintains a registry of backends (each a name + URL/port + token + per-backend agent config + per-backend app prefs) persisted in the Even Hub bridge storage API (`localStorage` is only a dev fallback). One backend is **active** at a time (= the last connected); the app boots onto it automatically on startup. The glasses/main UI always renders the active backend's data and is unaware of the registry. See `docs/superpowers/specs/2026-06-28-multi-backend-design.md`.
 
 ### 2. Unified Backend Service
 - **Framework**: Node.js / Express, acting as a unified proxy and session manager.
@@ -26,7 +26,7 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
 
 ## Data Flow
 
-1. **Pairing**: Phone UI prompts for Backend URL and Secure Token. Pasting the full backend `?token=` connect URL auto-splits those fields. QR/camera scanning is not supported because Even Hub plugin WebViews do not expose phone camera APIs. Phone establishes SSE connection.
+1. **Pairing / Backends**: Phone UI manages a **registry of backends**, each added via a Connect modal (name + URL/port + token; pasting the full backend `?token=` connect URL auto-splits URL and token). All agent config and app prefs are stored **per backend**. The user selects one backend as active; the app connects to it over HTTP/SSE. The last-connected backend is remembered and auto-connected on startup. QR/camera scanning is not supported because Even Hub plugin WebViews do not expose phone camera APIs. Existing single-backend installs are auto-imported into the registry on upgrade (one named backend, set active).
 2. **Boot**: Phone UI fetches available agents and their supported models from Backend. Backend performs an availability scan (`command -v`) to return `{ id, available }` for each agent.
 3. **Agent Selection (Glasses)**: User selects an agent -> Frontend requests `listSessions(provider)` -> displays New Session + recent sessions. Unavailable agents are displayed but visually grayed out on the Phone UI and disabled.
 4. **Session View (Glasses)**: User selects session -> Frontend requests `getHistory(sessionId)` -> populates up to 50 messages.
@@ -40,4 +40,4 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
 
 ## Security
 - **Authentication**: `X-AgentHome-Auth` header with encrypted payload containing the secure token.
-- **Credentials**: Bridge URL/token are stored in Even Hub bridge storage. Agent/STT/provider secrets remain on the backend. Encrypted request/response bodies use the bridge token-derived AES-GCM wire format.
+- **Credentials**: The active backend's URL/token are stored in Even Hub bridge storage (inside the `backends` registry; `localStorage` is a dev fallback). Agent/STT/provider secrets remain on the backend. Encrypted request/response bodies use the bridge token-derived AES-GCM wire format.

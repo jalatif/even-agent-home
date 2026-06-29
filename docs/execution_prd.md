@@ -1,18 +1,21 @@
 # AgentHome Execution PRD
 
 ## Product Overview
-AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connects to a single self-hosted backend that aggregates multiple AI providers into a single UI, allowing voice-first interaction with continuous sessions.
+AgentHome is a unified AI assistant app for Even Realities G2 glasses. It connects to a self-hosted backend that aggregates multiple AI providers into a single UI, allowing voice-first interaction with continuous sessions. The app supports **multiple saved backends**; one is active at a time (= last connected), and all agent config and app prefs are stored per backend.
 
 ## Core Features & Requirements
 
-### 1. Setup & Pairing
+### 1. Setup & Pairing (Multi-Backend)
 - **Phone UI**:
-  - Input for Backend URL/Port.
-  - Input for Secure Token (Shared Secret). Pasting a full backend `?token=` Connect URL into the Backend URL field auto-splits URL and token.
+  - A **Backends** section listing all connected backends by name with their URL/port; one is marked `[active]`.
+  - **Connect New Backend** modal: name + connection field + token. The connection field accepts either a full `http://host:port?token=...` URL (auto-splits URL and token) or a plain `host:port` with the token entered separately.
+  - **Selecting** a non-active backend immediately activates it and re-connects (agents/models/prefs reload for that backend). The active backend's name and URL/port are surfaced in the UI.
+  - **Edit** a backend (rename, change URL/port/token). **Remove** a backend (confirm; if it was active, fall back to the most-recent-other backend, else the first remaining, else empty state).
+  - **Last-connected backend** is remembered and auto-connected on startup.
+  - **Upgrade migration:** an existing single-backend install is auto-imported as one named backend (named after its host), set active, with all agent config + prefs preserved.
   - No QR scanner in the current client: Even Hub plugin WebViews do not expose phone camera capture.
   - STT provider selection is backend-only. The frontend always sends audio to `/api/transcribe`.
-  - Toggles to enable/disable specific agents (agents not available locally are grayed out and disabled).
-  - Dropdown lists to select the active model for each enabled agent (data sourced from backend). Claude defaults to `claude-opus-4-8`; stale saved Claude model IDs that are no longer in the live model list reset to that default.
+  - Per-active-backend: toggles to enable/disable specific agents (agents not available locally are grayed out and disabled); dropdown lists to select the active model for each enabled agent (data sourced from the active backend). Claude defaults to `claude-opus-4-8`; stale saved Claude model IDs that are no longer in the live model list reset to that default.
   - UI styled in dark-mode glassmorphism to match the aesthetic.
 
 ### 2. Agent Selection (Glasses)
