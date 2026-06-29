@@ -1,4 +1,14 @@
 {
   "testRoot": "scripts",
-  "appEventPrefix": "[AgentHomeTest]"
+  "appEventPrefix": "[AgentHomeTest]",
+  "webRoot": "web",
+  "backendRoot": "backend",
+  "backend": {
+    "cmd": "node",
+    "args": ["bin/even-agent-home.js", "--token", "my_super_secret_persistent_token_123", "--port", "3456"],
+    "healthUrl": "http://localhost:3456/api/agents"
+  },
+  "vitePort": 5173,
+  "backendPort": 3456,
+  "simPort": 9898
 }

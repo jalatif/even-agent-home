@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test:unit": "node --experimental-strip-types --no-warnings --test test/**/*.test.ts",
     "test:simulator": "node ../scripts/fuzzy-test.mjs",
-    "test:recorded": "node ~/.agents/skills/even-simulator-replay/scripts/run-fixture.mjs \"$(git rev-parse --show-toplevel)/scripts/simulator-recorded-sessions/**/*.fixture.json\"",
+    "test:recorded": "node ~/.agents/skills/even-simulator-replay/scripts/run-fixture.mjs \"$(git rev-parse --show-toplevel)/scripts/simulator-recorded-sessions/tests/**/*.fixture.json\"",
     "test:stt": "node ../scripts/test-stt-contract.mjs",
     "test:resume": "node ../scripts/test-claude-resume.mjs",
     "test:deps": "node ../scripts/test-dependency-presence.mjs",
