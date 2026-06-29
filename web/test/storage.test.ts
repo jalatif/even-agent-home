@@ -326,3 +326,24 @@ test('getApiConfig reflects the active backend after a switch', async () => {
   assert.equal(getApiConfig().baseUrl, 'http://b:1')
   assert.equal(getApiConfig().yolo, false)
 })
+
+test('hydrateApiConfig deep-link connect: ?baseUrl=+?token= with no active backend auto-creates one', async () => {
+  __resetApiStateForTests()
+  const store = installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  // Deep link carries both baseUrl and token; storage has no backends.
+  win.location = { search: '?baseUrl=http://dl-host:3456&token=dl-token', protocol: 'http:', host: 'localhost', port: '5173' }
+
+  const cfg = await hydrateApiConfig()
+  // A backend was created and made active from the deep link.
+  assert.equal(cfg.baseUrl, 'http://dl-host:3456')
+  assert.equal(cfg.token, 'dl-token')
+  assert.ok(getActiveBackend(), 'an active backend should exist after deep-link connect')
+  assert.equal(getActiveBackend()!.baseUrl, 'http://dl-host:3456')
+  // Persisted to the registry as the single, active backend.
+  const reg = JSON.parse(store.getItem('backends')!) as { backends: { id: string; baseUrl: string }[]; activeBackendId: string }
+  assert.equal(reg.backends.length, 1)
+  assert.equal(reg.backends[0]!.baseUrl, 'http://dl-host:3456')
+  assert.equal(reg.activeBackendId, reg.backends[0]!.id)
+})

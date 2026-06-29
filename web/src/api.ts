@@ -4,6 +4,9 @@ import {
   getBackend,
   peekRegistry,
   saveBackend as saveBackendForActive,
+  upsertBackend,
+  setActiveBackend,
+  nameFromBaseUrl,
   __resetBackendsStateForTests,
 } from './backends.ts'
 
@@ -107,18 +110,37 @@ function configFromLocation(): { token?: string; explicitBaseUrl?: string } {
  * persisted active backend < URL params) so a deep link refreshes credentials
  * without wiping prefs. Idempotent; pass `force: true` to bypass the flag and
  * re-read (needed after the bridge becomes available — see hydrateBackends).
+ *
+ * Deep-link connect: if a deep link carries a baseUrl+token (the connect URL a
+ * user pastes / the QR encodes) and there is no active backend yet, auto-create
+ * and activate a backend from those credentials. This keeps the "open the app
+ * via connect URL" onboarding path working under multi-backend, and means the
+ * glasses/main UI boots onto the connected backend rather than the empty state.
  */
 export async function hydrateApiConfig(force = false): Promise<AuthConfig> {
   if (configHydrated && !force) return currentConfig
   await hydrateBackends(force)
   refreshActiveView()
-  // URL params layer on top of the active backend's persisted fields:
-  //   ?token= alone refreshes the token; ?baseUrl= overrides the saved baseUrl.
   const { token, explicitBaseUrl } = configFromLocation()
-  currentConfig = {
-    ...currentConfig,
-    ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
-    ...(token ? { token } : {}),
+  // Deep-link connect when there is no active backend: create one from the
+  // connect URL so the app boots onto it. (If an active backend already
+  // exists, the params just layer on top as a credential refresh.)
+  if (!getActiveBackend() && explicitBaseUrl && token) {
+    const created = await upsertBackend({
+      name: nameFromBaseUrl(explicitBaseUrl),
+      baseUrl: explicitBaseUrl,
+      token,
+      prefs: {},
+      agentConfigs: {},
+    })
+    await setActiveBackend(created.id)
+    refreshActiveView()
+  } else {
+    currentConfig = {
+      ...currentConfig,
+      ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
+      ...(token ? { token } : {}),
+    }
   }
   configHydrated = true
   return currentConfig
