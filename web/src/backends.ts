@@ -134,7 +134,7 @@ export function migrateLegacy(
   legacyApiConfigRaw: string | null,
   legacyAgentConfigsRaw: string | null,
 ): BackendRegistry {
-  let legacy: { baseUrl?: string; token?: string; yolo?: boolean; debugView?: boolean; autoScrollLastExchange?: boolean; scrollSpeed?: 'slow' | 'medium' | 'fast' } = {}
+  let legacy: { baseUrl?: string; token?: string; yolo?: boolean; debugView?: boolean; autoScrollLastExchange?: boolean; scrollSpeed?: 'slow' | 'medium' | 'fast'; autoScrollMode?: 'off' | 'slow' | 'medium' | 'fast' } = {}
   if (legacyApiConfigRaw) {
     try {
       legacy = JSON.parse(legacyApiConfigRaw)
@@ -158,6 +158,18 @@ export function migrateLegacy(
     }
   }
 
+  // Migrate the legacy deprecated `autoScrollMode` ('off'|'slow'|'medium'|
+  // 'fast') into the current `autoScrollLastExchange` + `scrollSpeed` fields,
+  // exactly as the old api.ts migrateLegacyConfig did. Only applies when the
+  // new fields are absent (a real saved value wins).
+  let autoScrollLastExchange = legacy.autoScrollLastExchange
+  let scrollSpeed = legacy.scrollSpeed
+  const legacyAutoScrollMode = legacy.autoScrollMode
+  if (legacyAutoScrollMode && autoScrollLastExchange === undefined && scrollSpeed === undefined) {
+    autoScrollLastExchange = legacyAutoScrollMode !== 'off'
+    if (legacyAutoScrollMode !== 'off') scrollSpeed = legacyAutoScrollMode
+  }
+
   const id = makeBackendId()
   const backend: Backend = {
     id,
@@ -167,8 +179,8 @@ export function migrateLegacy(
     prefs: {
       yolo: legacy.yolo,
       debugView: legacy.debugView,
-      autoScrollLastExchange: legacy.autoScrollLastExchange,
-      scrollSpeed: legacy.scrollSpeed,
+      autoScrollLastExchange,
+      scrollSpeed,
     },
     agentConfigs,
   }

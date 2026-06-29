@@ -189,21 +189,36 @@ test('hydrateApiConfig force=true re-reads from storage after an initial hydrate
   win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
 
   // First hydration finds nothing → empty defaults. This mirrors the
-  // pre-bridge hydration in App.tsx (bridge KV not available yet).
+  // pre-bridge hydration in App.tsx (bridge KV not available yet). Note: the
+  // first hydrate runs legacy migration (no `backends` key, no legacy keys) and
+  // persists an EMPTY registry under `backends`, so it writes the key.
   let cfg = await hydrateApiConfig()
   assert.equal(cfg.baseUrl, '')
   assert.equal(cfg.token, '')
 
   // Later (simulating the EvenHub bridge becoming available) the durable
-  // store is populated. Without force, the cached defaults would win and
-  // the real connection settings would never load — exactly the bug where
-  // re-opening the app lost the user's connection.
+  // store is populated with the real config — now a `backends` registry
+  // (single backend, set active), not the legacy `apiConfig` key. Without
+  // force, the cached empty registry would win and the real connection
+  // settings would never load — exactly the bug where re-opening the app lost
+  // the user's connection.
+  const backendId = 'b-bridge-1'
   store.setItem(
-    'apiConfig',
+    'backends',
     JSON.stringify({
-      baseUrl: 'http://bridge-host:3456',
-      token: 'bridge-token',
-      yolo: true,
+      version: 1,
+      backends: [
+        {
+          id: backendId,
+          name: 'bridge-host:3456',
+          baseUrl: 'http://bridge-host:3456',
+          token: 'bridge-token',
+          prefs: { yolo: true },
+          agentConfigs: {},
+        },
+      ],
+      activeBackendId: backendId,
+      recentBackendIds: [backendId],
     }),
   )
   cfg = await hydrateApiConfig(true)
