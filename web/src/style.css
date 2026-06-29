@@ -472,3 +472,46 @@ button.stop-btn:hover {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ---- Multi-backend Settings UI ---- */
+.backends-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.backend-row {
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.05s ease;
+}
+.backend-row:not(.backend-row-active):hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.backend-row:not(.backend-row-active):active {
+  transform: translateY(1px);
+}
+.backend-row-active {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.backend-active-chip {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.backend-modal-backdrop {
+  backdrop-filter: blur(2px);
+}
+.backend-modal {
+  border: 1px solid var(--border-light);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 10px;
+}
+.backend-modal .input-group {
+  margin-bottom: 0.75rem;
+}
+.backend-empty {
+  border: 1px dashed var(--border-light);
+  border-radius: 8px;
+}

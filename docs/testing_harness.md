@@ -76,3 +76,15 @@ node scripts/test-polling-controller.mjs
 - A focused provider probe should be used when changing `pi` model handling:
   selected aliases like `minimax-m3` must be normalized to provider-qualified
   values from `~/.pi/agent/models.json` before spawning `pi`.
+
+## Multi-Backend Registry Unit Tests
+
+Multi-backend support adds `web/test/backends.test.ts` to the unit suite (run
+via `npm run test:unit --prefix web`). Because `api.ts` becomes a thin
+active-view adapter over the `backends` registry, this suite is the primary
+guard for the startup/storage invariants (boot-after-hydration ordering,
+refresh-nonce gate, bound bridge storage methods, force-rehydrate after bridge
+ready). See `docs/TESTING_PLAN.md §E/§F` and the design spec
+`docs/superpowers/specs/2026-06-28-multi-backend-design.md` for the full plan.
+The simulator flow/fuzzy catalog is unaffected (glasses/main UI is unchanged);
+only the phone Settings UI gains a Backends section.

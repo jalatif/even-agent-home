@@ -23,8 +23,19 @@ import {
 } from '../src/storage.ts'
 import {
   hydrateApiConfig,
+  setApiConfig,
+  saveAgentConfigs,
+  getApiConfig,
+  refreshActiveConfigView,
   __resetApiStateForTests,
 } from '../src/api.ts'
+import {
+  hydrateBackends,
+  upsertBackend,
+  setActiveBackend,
+  getActiveBackend,
+  __resetBackendsStateForTests,
+} from '../src/backends.ts'
 
 type WindowStorage = {
   getItem(key: string): string | null
@@ -189,21 +200,36 @@ test('hydrateApiConfig force=true re-reads from storage after an initial hydrate
   win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
 
   // First hydration finds nothing → empty defaults. This mirrors the
-  // pre-bridge hydration in App.tsx (bridge KV not available yet).
+  // pre-bridge hydration in App.tsx (bridge KV not available yet). Note: the
+  // first hydrate runs legacy migration (no `backends` key, no legacy keys) and
+  // persists an EMPTY registry under `backends`, so it writes the key.
   let cfg = await hydrateApiConfig()
   assert.equal(cfg.baseUrl, '')
   assert.equal(cfg.token, '')
 
   // Later (simulating the EvenHub bridge becoming available) the durable
-  // store is populated. Without force, the cached defaults would win and
-  // the real connection settings would never load — exactly the bug where
-  // re-opening the app lost the user's connection.
+  // store is populated with the real config — now a `backends` registry
+  // (single backend, set active), not the legacy `apiConfig` key. Without
+  // force, the cached empty registry would win and the real connection
+  // settings would never load — exactly the bug where re-opening the app lost
+  // the user's connection.
+  const backendId = 'b-bridge-1'
   store.setItem(
-    'apiConfig',
+    'backends',
     JSON.stringify({
-      baseUrl: 'http://bridge-host:3456',
-      token: 'bridge-token',
-      yolo: true,
+      version: 1,
+      backends: [
+        {
+          id: backendId,
+          name: 'bridge-host:3456',
+          baseUrl: 'http://bridge-host:3456',
+          token: 'bridge-token',
+          prefs: { yolo: true },
+          agentConfigs: {},
+        },
+      ],
+      activeBackendId: backendId,
+      recentBackendIds: [backendId],
     }),
   )
   cfg = await hydrateApiConfig(true)
@@ -214,4 +240,110 @@ test('hydrateApiConfig force=true re-reads from storage after an initial hydrate
   // Without force, the second call must return the cache (idempotent).
   const cached = await hydrateApiConfig()
   assert.equal(cached.baseUrl, 'http://bridge-host:3456')
+})
+
+// ---- Multi-backend adapter tests: api.ts writes into the ACTIVE backend ----
+
+test('setApiConfig writes connection + prefs into the ACTIVE backend', async () => {
+  __resetApiStateForTests()
+  const store = installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
+  // Seed an empty registry, add two backends, make A active.
+  await hydrateBackends()
+  const a = await upsertBackend({ name: 'A', baseUrl: 'http://a:1', token: 'ta', prefs: {}, agentConfigs: {} })
+  const b = await upsertBackend({ name: 'B', baseUrl: 'http://b:1', token: 'tb', prefs: {}, agentConfigs: {} })
+  await setActiveBackend(a.id)
+
+  // setApiConfig should land on A, not B and not a global singleton.
+  await setApiConfig({ baseUrl: 'http://a-updated:2', token: 'ta2', yolo: true, scrollSpeed: 'fast' })
+
+  const reg = JSON.parse(store.getItem('backends')!) as { backends: { id: string; baseUrl: string; token: string; prefs: { yolo?: boolean; scrollSpeed?: string } }[] }
+  const afterA = reg.backends.find((x) => x.id === a.id)!
+  const afterB = reg.backends.find((x) => x.id === b.id)!
+  assert.equal(afterA.baseUrl, 'http://a-updated:2')
+  assert.equal(afterA.token, 'ta2')
+  assert.equal(afterA.prefs.yolo, true)
+  assert.equal(afterA.prefs.scrollSpeed, 'fast')
+  assert.equal(afterB.baseUrl, 'http://b:1', 'non-active backend must be untouched')
+})
+
+test('switch atomicity: after setActiveBackend, setApiConfig write-back lands on the NEW active backend', async () => {
+  __resetApiStateForTests()
+  const store = installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
+  await hydrateBackends()
+  const a = await upsertBackend({ name: 'A', baseUrl: 'http://a:1', token: 'ta', prefs: {}, agentConfigs: {} })
+  const b = await upsertBackend({ name: 'B', baseUrl: 'http://b:1', token: 'tb', prefs: {}, agentConfigs: {} })
+  await setActiveBackend(a.id)
+  // Switch to B, then refresh the view (mirrors what App does on switch).
+  await setActiveBackend(b.id)
+  refreshActiveConfigView()
+  assert.equal(getActiveBackend()!.id, b.id)
+
+  // An auto-persist write-back (App's config effect) now lands on B.
+  await setApiConfig({ baseUrl: 'http://b-updated:9', token: 'tb9' })
+
+  const reg = JSON.parse(store.getItem('backends')!) as { backends: { id: string; baseUrl: string }[] }
+  assert.equal(reg.backends.find((x) => x.id === b.id)!.baseUrl, 'http://b-updated:9')
+  assert.equal(reg.backends.find((x) => x.id === a.id)!.baseUrl, 'http://a:1', 'A untouched by the post-switch write')
+})
+
+test('saveAgentConfigs writes into the ACTIVE backend', async () => {
+  __resetApiStateForTests()
+  installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
+  await hydrateBackends()
+  const a = await upsertBackend({ name: 'A', baseUrl: 'http://a:1', token: 'ta', prefs: {}, agentConfigs: {} })
+  await setActiveBackend(a.id)
+  await saveAgentConfigs({ claude: { enabled: true, model: 'claude-opus-4-8' } })
+  const active = getActiveBackend()!
+  assert.deepEqual(active.agentConfigs, { claude: { enabled: true, model: 'claude-opus-4-8' } })
+})
+
+test('getApiConfig reflects the active backend after a switch', async () => {
+  __resetApiStateForTests()
+  installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  win.location = { search: '', protocol: 'http:', host: 'localhost', port: '80' }
+  await hydrateBackends()
+  const a = await upsertBackend({ name: 'A', baseUrl: 'http://a:1', token: 'ta', prefs: { yolo: true }, agentConfigs: {} })
+  const b = await upsertBackend({ name: 'B', baseUrl: 'http://b:1', token: 'tb', prefs: { yolo: false }, agentConfigs: {} })
+  await setActiveBackend(a.id)
+  refreshActiveConfigView()
+  await hydrateApiConfig(true)
+  assert.equal(getApiConfig().baseUrl, 'http://a:1')
+  assert.equal(getApiConfig().yolo, true)
+  await setActiveBackend(b.id)
+  refreshActiveConfigView()
+  await hydrateApiConfig(true)
+  assert.equal(getApiConfig().baseUrl, 'http://b:1')
+  assert.equal(getApiConfig().yolo, false)
+})
+
+test('hydrateApiConfig deep-link connect: ?baseUrl=+?token= with no active backend auto-creates one', async () => {
+  __resetApiStateForTests()
+  const store = installWindow()
+  clearBridge()
+  const win = (globalThis as { window: MutableWindow }).window!
+  // Deep link carries both baseUrl and token; storage has no backends.
+  win.location = { search: '?baseUrl=http://dl-host:3456&token=dl-token', protocol: 'http:', host: 'localhost', port: '5173' }
+
+  const cfg = await hydrateApiConfig()
+  // A backend was created and made active from the deep link.
+  assert.equal(cfg.baseUrl, 'http://dl-host:3456')
+  assert.equal(cfg.token, 'dl-token')
+  assert.ok(getActiveBackend(), 'an active backend should exist after deep-link connect')
+  assert.equal(getActiveBackend()!.baseUrl, 'http://dl-host:3456')
+  // Persisted to the registry as the single, active backend.
+  const reg = JSON.parse(store.getItem('backends')!) as { backends: { id: string; baseUrl: string }[]; activeBackendId: string }
+  assert.equal(reg.backends.length, 1)
+  assert.equal(reg.backends[0]!.baseUrl, 'http://dl-host:3456')
+  assert.equal(reg.activeBackendId, reg.backends[0]!.id)
 })

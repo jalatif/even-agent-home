@@ -1,4 +1,14 @@
-import { storageGet, storageSet } from './storage.ts'
+import {
+  hydrateBackends,
+  getActiveBackend,
+  getBackend,
+  peekRegistry,
+  saveBackend as saveBackendForActive,
+  upsertBackend,
+  setActiveBackend,
+  nameFromBaseUrl,
+  __resetBackendsStateForTests,
+} from './backends.ts'
 
 // Empty by default: the settings input shows its placeholder hint
 // (http://<BACKEND_SERVER>:<PORT>) and the app shows its "please configure"
@@ -20,14 +30,12 @@ export interface AuthConfig {
   autoScrollMode?: 'off' | 'slow' | 'medium' | 'fast'
 }
 
-const API_CONFIG_KEY = 'apiConfig'
-const AGENT_CONFIGS_KEY = 'agentConfigs'
-
-// In-memory cache. The phone WebView can reload the JS bundle at any time
-// (host app rotation, page rebuild, etc.) and we want reads to be sync so
-// the controller can use them on hot paths (scroll, prompt). The async
-// storage functions keep this cache fresh and the persistent store (bridge
-// KV) durable across reloads.
+// Active view: currentConfig / currentAgentConfigs are the ACTIVE backend's
+// flattened slice, rebuilt from the registry by refreshActiveView(). This keeps
+// the public surface (getApiConfig/getApi/getAgentConfigs) byte-identical to
+// the pre-multi-backend world so the controller and glasses/main UI never
+// change — they still read the active backend's data. The async hydrate calls
+// keep this view fresh and the registry (bridge KV) durable across reloads.
 let currentConfig: AuthConfig = {
   baseUrl: defaultApiBaseUrl,
   token: '',
@@ -37,6 +45,35 @@ let currentConfig: AuthConfig = {
 let currentAgentConfigs: Record<string, AgentProviderConfig> = {}
 let configHydrated = false
 let agentConfigsHydrated = false
+
+/**
+ * Rebuild the active view (currentConfig + currentAgentConfigs) from the
+ * active backend in the registry. Called after every hydrate / active switch /
+ * save so reads stay consistent. When there is no active backend the view
+ * collapses to empty defaults (the "please configure" empty state).
+ */
+function refreshActiveView(): void {
+  const backend = getActiveBackend()
+  if (!backend) {
+    currentConfig = {
+      baseUrl: defaultApiBaseUrl,
+      token: '',
+      autoScrollLastExchange: true,
+      scrollSpeed: 'medium',
+    }
+    currentAgentConfigs = {}
+    return
+  }
+  currentConfig = {
+    baseUrl: backend.baseUrl,
+    token: backend.token,
+    yolo: backend.prefs.yolo,
+    debugView: backend.prefs.debugView,
+    autoScrollLastExchange: backend.prefs.autoScrollLastExchange,
+    scrollSpeed: backend.prefs.scrollSpeed,
+  }
+  currentAgentConfigs = backend.agentConfigs ?? {}
+}
 
 // Reset the in-memory cache back to the initial defaults. Used by tests
 // that need to assert on the "fresh hydration" path; production code
@@ -52,6 +89,7 @@ export function __resetApiStateForTests(): void {
   currentAgentConfigs = {}
   configHydrated = false
   agentConfigsHydrated = false
+  __resetBackendsStateForTests()
 }
 
 function configFromLocation(): { token?: string; explicitBaseUrl?: string } {
@@ -63,57 +101,46 @@ function configFromLocation(): { token?: string; explicitBaseUrl?: string } {
   }
 }
 
-
-function migrateLegacyConfig(parsed: Partial<AuthConfig>): Partial<AuthConfig> {
-  const out: Partial<AuthConfig> = { ...parsed }
-  if (
-    parsed.autoScrollMode &&
-    parsed.autoScrollLastExchange === undefined &&
-    parsed.scrollSpeed === undefined
-  ) {
-    out.autoScrollLastExchange = parsed.autoScrollMode !== 'off'
-    if (parsed.autoScrollMode !== 'off') out.scrollSpeed = parsed.autoScrollMode
-  }
-  delete out.autoScrollMode
-  return out
-}
-
 /**
- * Read the auth config from the persistent store (bridge KV, with
- * `localStorage` fallback) and seed the in-memory cache. URL params are
- * layered ON TOP of the saved config so a deep link refreshes credentials
- * without wiping unrelated saved fields (yolo, debugView, scroll prefs,
- * etc.). Idempotent — repeated calls are cheap because they hit the cache
- * after the first hydration.
+ * Read the auth config from the persistent store and seed the in-memory active
+ * view. Now backed by the multi-backend registry: hydrate the registry (which
+ * handles bridge-vs-localStorage precedence and legacy migration), then rebuild
+ * the active view from the active backend. URL params are layered ON TOP of the
+ * active backend's persisted fields (same priority as before: defaults <
+ * persisted active backend < URL params) so a deep link refreshes credentials
+ * without wiping prefs. Idempotent; pass `force: true` to bypass the flag and
+ * re-read (needed after the bridge becomes available — see hydrateBackends).
  *
- * Pass `force: true` to bypass the `configHydrated` short-circuit. This is
- * needed after the EvenHub bridge becomes available: the first hydration
- * (pre-bridge) reads from the `localStorage` fallback and sets the flag,
- * so without `force` the post-bridge re-hydration would never consult the
- * durable bridge KV store and would lock in stale/empty defaults.
+ * Deep-link connect: if a deep link carries a baseUrl+token (the connect URL a
+ * user pastes / the QR encodes) and there is no active backend yet, auto-create
+ * and activate a backend from those credentials. This keeps the "open the app
+ * via connect URL" onboarding path working under multi-backend, and means the
+ * glasses/main UI boots onto the connected backend rather than the empty state.
  */
 export async function hydrateApiConfig(force = false): Promise<AuthConfig> {
   if (configHydrated && !force) return currentConfig
-  let saved: Partial<AuthConfig> = {}
-  try {
-    const raw = await storageGet(API_CONFIG_KEY)
-    if (raw) saved = migrateLegacyConfig(JSON.parse(raw))
-  } catch (e) {
-    console.warn('[api] failed to read apiConfig from storage', e)
-  }
-  // Layering rules (lowest → highest priority):
-  //   1. Hard defaults (currentConfig's initial values) — baseUrl is '' so
-  //      the settings placeholder hint shows until the user configures it.
-  //   2. Persisted fields (token, baseUrl, yolo, debug, scroll prefs).
-  //      Saved fields ALWAYS win over the empty default.
-  //   3. URL params. `?token=` alone refreshes the token without rewriting
-  //      baseUrl. `?baseUrl=` (explicit) overrides saved.
+  await hydrateBackends(force)
+  refreshActiveView()
   const { token, explicitBaseUrl } = configFromLocation()
-  currentConfig = {
-    ...currentConfig,
-    ...saved,
-    ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
-    ...(token ? { token } : {}),
+  // Deep-link connect when there is no active backend: create one from the
+  // connect URL so the app boots onto it. (If an active backend already
+  // exists, the params just layer on top as a credential refresh.)
+  if (!getActiveBackend() && explicitBaseUrl && token) {
+    const created = await upsertBackend({
+      name: nameFromBaseUrl(explicitBaseUrl),
+      baseUrl: explicitBaseUrl,
+      token,
+      prefs: {},
+      agentConfigs: {},
+    })
+    await setActiveBackend(created.id)
+    refreshActiveView()
+  } else {
+    currentConfig = {
+      ...currentConfig,
+      ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
+      ...(token ? { token } : {}),
+    }
   }
   configHydrated = true
   return currentConfig
@@ -121,24 +148,37 @@ export async function hydrateApiConfig(force = false): Promise<AuthConfig> {
 
 export async function hydrateAgentConfigs(force = false): Promise<Record<string, AgentProviderConfig>> {
   if (agentConfigsHydrated && !force) return currentAgentConfigs
-  try {
-    const raw = await storageGet(AGENT_CONFIGS_KEY)
-    if (raw) currentAgentConfigs = JSON.parse(raw)
-  } catch (e) {
-    console.warn('[api] failed to read agentConfigs from storage', e)
-  }
+  await hydrateBackends(force)
+  refreshActiveView()
   agentConfigsHydrated = true
   return currentAgentConfigs
 }
 
+/**
+ * Persist the connection + app prefs into the ACTIVE backend's slice of the
+ * registry (or just update the in-memory view if there is no active backend
+ * yet — e.g. before the first Connect or after removing the last backend).
+ * The in-memory currentConfig is updated synchronously first so hot-path
+ * reads stay consistent while the bridge write is in flight.
+ */
 export async function setApiConfig(config: AuthConfig): Promise<void> {
   const nextConfig = { ...config }
   delete nextConfig.autoScrollMode
   currentConfig = nextConfig
-  try {
-    await storageSet(API_CONFIG_KEY, JSON.stringify(nextConfig))
-  } catch (e) {
-    console.warn('[api] failed to save apiConfig to storage', e)
+  const activeId = peekRegistry().activeBackendId
+  if (activeId) {
+    if (getBackend(activeId)) {
+      await saveBackendForActive(activeId, {
+        baseUrl: nextConfig.baseUrl,
+        token: nextConfig.token,
+        prefs: {
+          yolo: nextConfig.yolo,
+          debugView: nextConfig.debugView,
+          autoScrollLastExchange: nextConfig.autoScrollLastExchange,
+          scrollSpeed: nextConfig.scrollSpeed,
+        },
+      })
+    }
   }
 }
 
@@ -175,11 +215,20 @@ export async function getAgentConfigs(): Promise<Record<string, AgentProviderCon
 
 export async function saveAgentConfigs(configs: Record<string, AgentProviderConfig>): Promise<void> {
   currentAgentConfigs = configs
-  try {
-    await storageSet(AGENT_CONFIGS_KEY, JSON.stringify(configs))
-  } catch (e) {
-    console.warn('[api] failed to save agentConfigs to storage', e)
+  const activeId = peekRegistry().activeBackendId
+  if (activeId) {
+    await saveBackendForActive(activeId, { agentConfigs: configs })
   }
+}
+
+/**
+ * Rebuild the active view from the registry's active backend. Called by the
+ * UI after setActiveBackend / removeBackend so the controller's next
+ * getApi()/getApiConfig() reads the newly-active backend's slice. Public so
+ * App.tsx can trigger it without importing backends.ts directly.
+ */
+export function refreshActiveConfigView(): void {
+  refreshActiveView()
 }
 
 export function getApi() {

@@ -73,3 +73,27 @@ Container IDs must be globally unique across all element types in a render frame
 - Duplicate `press` within 90ms must be suppressed.
 - `press` within 30ms of `doublePress` must be suppressed.
 - Rapid `swipeUp/swipeDown` (<30ms apart) must be suppressed to prevent overshoot.
+
+## 6. Phone Settings Invariants (Multi-Backend)
+These concern the phone (React DOM) Settings UI, not the glasses render model.
+
+- **Backends section is present** at the top of Settings, listing every
+  connected backend by name + URL/port. Exactly one row is the **active**
+  backend, shown with a filled dot `●` and an `[active]` chip; inactive rows use
+  a hollow dot `○`.
+- **Active backend drives all other settings.** The Agent Configuration card
+  and the app-preferences card (auto-scroll, scroll speed, yolo, debug) always
+  reflect the **active** backend's stored slice; switching backends must
+  re-populate these before the user can edit them.
+- **No standalone Backend URL/Token fields** outside the Connect/Edit modal.
+  Connection config lives only in the modal (the legacy "Backend Configuration"
+  card is removed).
+- **Connect/Edit modal** is a single centered overlay with Name + Connection +
+  Token fields and `[Test] [Cancel] [Connect/Save]` actions. The Connection
+  field accepts a full `?token=` URL (auto-split) **or** plain `host:port`.
+- **Empty state:** if the registry has no backends, Settings shows a prominent
+  "No backends connected — Connect your first backend" CTA and the glasses show
+  the "please configure" empty state.
+- **Switch atomicity:** selecting a non-active backend immediately activates it
+  and re-boots the controller; there is no separate confirm step and no
+  half-applied state (the active view never lags behind `activeBackendId`).

@@ -51,8 +51,14 @@ const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
 const artifactRoot = path.join(repoRoot, 'artifacts', 'fuzzy-test', timestamp)
 const testHost = process.env.AGENT_HOME_TEST_HOST ?? 'localhost'
 const testToken = 'my_super_secret_persistent_token_123'
+// The harness starts the backend on its own port (3456) and serves the app on
+// `vitePort`; the two differ, so the app cannot reach the backend via its page
+// origin. Pass the backend's baseUrl explicitly as a connect deep link so the
+// app boots onto it (the same ?baseUrl=+?token= connect URL a user pastes).
+const backendPort = Number(args['backend-port'] ?? process.env.BACKEND_PORT ?? 3456)
 const testParams = new URLSearchParams()
 if (isFixtureMode) testParams.set('agentHomeFixture', '1')
+testParams.set('baseUrl', `http://${testHost}:${backendPort}`)
 testParams.set('token', testToken)
 const testUrl = `http://${testHost}:${vitePort}/?${testParams.toString()}`
 const simUrl = `http://${testHost}:${automationPort}`
