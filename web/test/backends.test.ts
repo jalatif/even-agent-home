@@ -275,3 +275,125 @@ test('getRegistry: returns cache and kicks off async hydrate when not hydrated',
   // After hydration the cache reflects storage (empty here).
   assert.equal(getRegistry().backends.length, 0)
 })
+
+// ---- Registry mutation op tests ----
+
+import {
+  upsertBackend,
+  saveBackend,
+  setActiveBackend,
+  removeBackend,
+  getActiveBackend,
+  getBackendsList,
+  getBackend,
+} from '../src/backends.ts'
+
+// Helper: hydrate an empty registry into a known cache state for op tests.
+async function seedRegistry(backends: Array<Partial<import('../src/backends.ts').Backend>>): Promise<void> {
+  __resetBackendsStateForTests()
+  installWindow()
+  clearBridge()
+  await hydrateBackends() // empty
+  for (const b of backends) {
+    await upsertBackend({
+      name: b.name ?? 'B',
+      baseUrl: b.baseUrl ?? 'http://x:1',
+      token: b.token ?? 't',
+      prefs: b.prefs ?? {},
+      agentConfigs: b.agentConfigs ?? {},
+    })
+  }
+}
+
+test('upsertBackend: new backend gets an id and is appended', async () => {
+  await seedRegistry([])
+  const b = await upsertBackend({ name: 'A', baseUrl: 'http://a:1', token: 't', prefs: {}, agentConfigs: {} })
+  assert.ok(b.id)
+  assert.equal(getBackendsList().length, 1)
+})
+
+test('upsertBackend: update existing preserves id', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }])
+  const a = getBackendsList()[0]
+  const updated = await upsertBackend({ id: a.id, name: 'A2', baseUrl: 'http://a:2', token: 't2', prefs: {}, agentConfigs: {} })
+  assert.equal(updated.id, a.id)
+  assert.equal(updated.name, 'A2')
+  assert.equal(updated.baseUrl, 'http://a:2')
+})
+
+test('setActiveBackend: flips active, moves to front of recency, calls hook', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }])
+  const [a, b] = getBackendsList()
+  let hookCalls = 0
+  // Make A active first.
+  await setActiveBackend(a.id, () => { hookCalls++ })
+  assert.equal(getActiveBackend()?.id, a.id)
+  // Switch to B -> hook fires (active changed).
+  const changed = await setActiveBackend(b.id, () => { hookCalls++ })
+  assert.equal(changed, true)
+  assert.equal(getActiveBackend()?.id, b.id)
+  assert.equal(getBackendsList()[0].id, b.id, 'active backend should be first in list')
+  // Switch to B again -> no change, hook must NOT fire.
+  const changed2 = await setActiveBackend(b.id, () => { hookCalls++ })
+  assert.equal(changed2, false)
+  // 2 hook calls: A-set (first switch) + B-set. The re-set of B did not add a call.
+  assert.equal(hookCalls, 2)
+})
+
+test('setActiveBackend: no-op returns false for unknown id', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }])
+  const changed = await setActiveBackend('does-not-exist')
+  assert.equal(changed, false)
+})
+
+test('saveBackend: partial patch merges without clobbering untouched fields', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1', prefs: { yolo: true, debugView: false } }])
+  const a = getBackendsList()[0]
+  await saveBackend(a.id, { prefs: { yolo: false } })
+  const after = getBackend(a.id)!
+  assert.equal(after.prefs.yolo, false)
+  assert.equal(after.name, 'A', 'untouched name preserved')
+  assert.equal(after.baseUrl, 'http://a:1', 'untouched baseUrl preserved')
+})
+
+test('saveBackend: no-op for unknown id', async () => {
+  await seedRegistry([])
+  await saveBackend('nope', { name: 'X' })
+  assert.equal(getBackendsList().length, 0)
+})
+
+test('removeBackend: non-active removal leaves active unchanged', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }])
+  const [a, b] = getBackendsList()
+  await setActiveBackend(a.id)
+  const res = await removeBackend(b.id)
+  assert.equal(res.activeChanged, false)
+  assert.equal(getActiveBackend()?.id, a.id)
+  assert.equal(getBackendsList().length, 1)
+})
+
+test('removeBackend: active removal falls back to most-recent other', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }, { name: 'C', baseUrl: 'http://c:1' }])
+  const [a, b, c] = getBackendsList()
+  // Recency order: a (most recent), then c, then b.
+  await setActiveBackend(a.id)
+  await setActiveBackend(b.id)
+  await setActiveBackend(c.id)
+  await setActiveBackend(a.id) // a most-recent, then c, then b
+  // Remove the active 'a' -> fallback should be 'c' (next most recent).
+  const res = await removeBackend(a.id)
+  assert.equal(res.activeChanged, true)
+  assert.equal(res.fallbackId, c.id)
+  assert.equal(getActiveBackend()?.id, c.id)
+})
+
+test('removeBackend: last backend removal yields empty registry, null active', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }])
+  const a = getBackendsList()[0]
+  await setActiveBackend(a.id)
+  const res = await removeBackend(a.id)
+  assert.equal(res.activeChanged, true)
+  assert.equal(res.fallbackId, null)
+  assert.equal(getActiveBackend(), null)
+  assert.equal(getBackendsList().length, 0)
+})

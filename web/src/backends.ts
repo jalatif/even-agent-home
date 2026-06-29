@@ -275,3 +275,135 @@ export function peekRegistry(): BackendRegistry {
 export function isRegistryHydrated(): boolean {
   return registryHydrated
 }
+
+// ---- Registry mutation ops ----
+
+/** Persist the current cache to storage. */
+async function persist(): Promise<void> {
+  try {
+    await storageSet(BACKENDS_KEY, JSON.stringify(currentRegistry))
+  } catch (e) {
+    console.warn('[backends] failed to persist registry', e)
+  }
+}
+
+/** Find a backend by id (from the cache). */
+export function getBackend(id: string): Backend | undefined {
+  return currentRegistry.backends.find((b) => b.id === id)
+}
+
+/** The active backend, or null when none is active. */
+export function getActiveBackend(): Backend | null {
+  if (!currentRegistry.activeBackendId) return null
+  return getBackend(currentRegistry.activeBackendId) ?? null
+}
+
+/** Ordered list for the UI: active first, then the rest by recency then list order. */
+export function getBackendsList(): Backend[] {
+  const ids = new Set<string>()
+  const out: Backend[] = []
+  const pushIfPresent = (id: string | null) => {
+    if (id && !ids.has(id)) {
+      const b = getBackend(id)
+      if (b) { out.push(b); ids.add(id) }
+    }
+  }
+  pushIfPresent(currentRegistry.activeBackendId)
+  for (const id of currentRegistry.recentBackendIds) pushIfPresent(id)
+  for (const b of currentRegistry.backends) pushIfPresent(b.id)
+  return out
+}
+
+/**
+ * Insert or update a backend by id. For a new backend (no id / id not found),
+ * a fresh id is generated and the backend is appended. Returns the stored
+ * backend (with its id). Does NOT change which backend is active.
+ */
+export async function upsertBackend(input: Omit<Backend, 'id'> & { id?: string }): Promise<Backend> {
+  const existing = input.id ? getBackend(input.id) : undefined
+  let stored: Backend
+  if (existing) {
+    stored = { ...existing, ...input, id: existing.id }
+    currentRegistry = {
+      ...currentRegistry,
+      backends: currentRegistry.backends.map((b) => (b.id === existing.id ? stored : b)),
+    }
+  } else {
+    stored = { ...input, id: makeBackendId() }
+    currentRegistry = { ...currentRegistry, backends: [...currentRegistry.backends, stored] }
+  }
+  await persist()
+  return stored
+}
+
+/**
+ * Merge a partial patch into one backend (e.g. editing name/url/token/prefs or
+ * replacing its agentConfigs). No-op if the id is not found. Used by api.ts
+ * to write connection/prefs/agentConfigs back into the ACTIVE backend.
+ */
+export async function saveBackend(id: string, patch: Partial<Omit<Backend, 'id'>>): Promise<void> {
+  const existing = getBackend(id)
+  if (!existing) return
+  const updated: Backend = { ...existing, ...patch, id }
+  currentRegistry = {
+    ...currentRegistry,
+    backends: currentRegistry.backends.map((b) => (b.id === id ? updated : b)),
+  }
+  await persist()
+}
+
+/**
+ * Atomically set the active backend:
+ *   1. flip activeBackendId,
+ *   2. move it to the front of recentBackendIds,
+ *   3. refresh the api.ts active view (via the optional hook, kept external to
+ *      avoid an import cycle with api.ts),
+ *   4. persist.
+ * No-op if the id is not found. Returns true if the active backend changed.
+ */
+export async function setActiveBackend(
+  id: string,
+  onActiveChanged?: () => void,
+): Promise<boolean> {
+  const target = getBackend(id)
+  if (!target) return false
+  const changed = currentRegistry.activeBackendId !== id
+  // Recency: most-recent first, dedupe the newly-active id.
+  const recentBackendIds = [id, ...currentRegistry.recentBackendIds.filter((x) => x !== id)]
+  currentRegistry = {
+    ...currentRegistry,
+    activeBackendId: id,
+    recentBackendIds,
+  }
+  if (changed && onActiveChanged) onActiveChanged()
+  await persist()
+  return changed
+}
+
+/**
+ * Remove a backend. If it was active, fall back to the most-recent-other
+ * backend (else first remaining, else null) and refresh the api.ts view via
+ * the hook. Returns whether the active backend changed and the new active id.
+ */
+export async function removeBackend(
+  id: string,
+  onActiveChanged?: () => void,
+): Promise<{ activeChanged: boolean; fallbackId: string | null }> {
+  const wasActive = currentRegistry.activeBackendId === id
+  const remaining = currentRegistry.backends.filter((b) => b.id !== id)
+  let activeBackendId = currentRegistry.activeBackendId
+  if (wasActive) {
+    activeBackendId = pickFallbackBackend(currentRegistry, id)
+  }
+  const recentBackendIds = currentRegistry.recentBackendIds.filter((x) => x !== id)
+  const activeChanged = wasActive && activeBackendId !== id
+  currentRegistry = {
+    ...currentRegistry,
+    backends: remaining,
+    activeBackendId,
+    recentBackendIds,
+  }
+  if (activeChanged && onActiveChanged) onActiveChanged()
+  await persist()
+  return { activeChanged, fallbackId: activeBackendId }
+}
