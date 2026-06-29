@@ -14,6 +14,7 @@ import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import { registerBridgeStorage } from './storage'
 import { isBackendConfigured } from './configHelpers'
+import { hydrateSimSettings, emitSettingsSnapshot, isSimSession } from './sim-settings'
 import './style.css'
 
 function formatModelName(m: string): string {
@@ -146,6 +147,24 @@ export default function App() {
   const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentProviderConfig>>({})
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
   const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
+
+  // Simulator record/replay: restore recorded settings BEFORE the app boots,
+  // then emit a settings snapshot so the skill can capture the current config.
+  // The app also re-emits whenever config changes (the existing config-change
+  // effect below calls emitSettingsSnapshot when isSimSession() is true).
+  // No-op on real hardware / normal dev (gated by __sim_session in the URL).
+  useEffect(() => {
+    if (!isSimSession()) return
+    void hydrateSimSettings().then(() => void emitSettingsSnapshot())
+    const onHashChange = () => {
+      if (window.location.hash === '#snapshot') {
+        void emitSettingsSnapshot()
+        window.location.hash = ''
+      }
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   useEffect(() => {
     let unmounted = false
