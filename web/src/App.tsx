@@ -7,6 +7,7 @@ import {
   saveAgentConfigs,
   hydrateApiConfig,
   hydrateAgentConfigs,
+  refreshActiveConfigView,
 } from './api'
 import type { AgentProviderConfig, AuthConfig } from './api'
 import { AgentHomeController } from './controller/agentHomeController'
@@ -14,6 +15,16 @@ import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import { registerBridgeStorage } from './storage'
 import { isBackendConfigured } from './configHelpers'
+import {
+  getBackendsList,
+  getActiveBackend,
+  setActiveBackend,
+  removeBackend,
+  upsertBackend,
+  saveBackend,
+  normalizeConnectionInput,
+  type Backend,
+} from './backends'
 import './style.css'
 
 function formatModelName(m: string): string {
@@ -102,29 +113,6 @@ function modelVersionDesc(a: string, b: string): number {
   return 0
 }
 
-/**
- * Parse a backend connection URL of the form
- *   http://<host>:<port>?token=<token>[&name=<name>]
- * (the form printed by the backend banner and embedded in the QR code) and
- * return the corresponding { baseUrl, token } pair, or null if the input is
- * not a recognizable connection URL.
- */
-function parseConnectionUrl(input: string): { baseUrl: string; token: string } | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-  const token = parsed.searchParams.get('token');
-  if (!token) return null;
-  const baseUrl = `${parsed.protocol}//${parsed.host}`;
-  return { baseUrl, token };
-}
-
 export default function App() {
   // Initial state is the in-memory cache. It is populated synchronously
   // from defaults; the bridge/localStorage hydration below patches in the
@@ -147,6 +135,26 @@ export default function App() {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
   const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
 
+  // ---- Multi-backend UI state ----
+  // backendsVersion is bumped whenever the registry changes so the list re-renders.
+  const [backendsVersion, setBackendsVersion] = useState(0)
+  const bumpBackends = () => setBackendsVersion((v) => v + 1)
+  // Connect/Edit modal state. `editingBackendId` is null for "create new",
+  // or an existing backend id for "edit".
+  const [backendModalOpen, setBackendModalOpen] = useState(false)
+  const [editingBackendId, setEditingBackendId] = useState<string | null>(null)
+  const [modalName, setModalName] = useState('')
+  const [modalConnection, setModalConnection] = useState('')
+  const [modalToken, setModalToken] = useState('')
+  const [modalTesting, setModalTesting] = useState(false)
+  const [modalTestResult, setModalTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [modalError, setModalError] = useState<string | null>(null)
+
+  const activeBackend = getActiveBackend()
+  const backendsList = getBackendsList()
+  // suppress unused-var lint for the bump trigger
+  void backendsVersion
+
   useEffect(() => {
     let unmounted = false
     // Hydrate from storage before the bridge is ready so the UI never shows
@@ -159,6 +167,8 @@ export default function App() {
       if (unmounted) return
       setConfig(hydratedConfig)
       setAgentConfigs(hydratedAgentConfigs)
+      // Re-render so the Backends list reflects the now-hydrated registry.
+      bumpBackends()
     })()
 
     const ctrl = new AgentHomeController()
@@ -221,6 +231,9 @@ export default function App() {
         if (unmounted) return
         setConfig(hydratedConfig)
         setAgentConfigs(hydratedAgentConfigs)
+        // Re-render so the Backends list reflects the bridge KV store (the
+        // active backend / last-connected is now known).
+        bumpBackends()
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ;(ctrl as any).bridge = bridge
@@ -265,14 +278,126 @@ export default function App() {
     if (controller) controller.boot()
   }
 
-  // Pasting a full connection URL into the Backend URL field should auto-split
-  // into baseUrl + token instead of forcing the user to retype both values.
-  const handleBaseUrlPaste = (e: ClipboardEvent<HTMLInputElement>) => {
-    const pasted = e.clipboardData.getData('text');
-    const parsed = parseConnectionUrl(pasted);
-    if (!parsed) return;
-    e.preventDefault();
-    setConfig(prev => ({ ...prev, baseUrl: parsed.baseUrl, token: parsed.token }));
+  // ---- Multi-backend handlers ----
+
+  // Open the modal to connect a NEW backend.
+  const openConnectModal = () => {
+    setEditingBackendId(null)
+    setModalName('')
+    setModalConnection('')
+    setModalToken('')
+    setModalError(null)
+    setModalTestResult(null)
+    setBackendModalOpen(true)
+  }
+
+  // Open the modal to EDIT an existing backend.
+  const openEditModal = (backend: Backend) => {
+    setEditingBackendId(backend.id)
+    setModalName(backend.name)
+    setModalConnection(backend.baseUrl)
+    setModalToken(backend.token)
+    setModalError(null)
+    setModalTestResult(null)
+    setBackendModalOpen(true)
+  }
+
+  // Auto-split a pasted full ?token= URL into connection+token fields.
+  const handleModalConnectionPaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text')
+    const parsed = normalizeConnectionInput(pasted)
+    if (!parsed) return
+    // Only auto-fill when the paste looks like a full URL (has a token); a
+    // bare host paste is left alone so the user can keep typing the port.
+    if (parsed.token) {
+      e.preventDefault()
+      setModalConnection(parsed.baseUrl)
+      setModalToken(parsed.token)
+    }
+  }
+
+  // Ping the backend to confirm reachability before saving. Does not persist.
+  const handleTestBackend = async () => {
+    setModalTesting(true)
+    setModalTestResult(null)
+    setModalError(null)
+    try {
+      const parsed = normalizeConnectionInput(modalConnection)
+      const baseUrl = parsed?.baseUrl ?? modalConnection.trim()
+      const token = modalToken.trim()
+      if (!baseUrl || !token) throw new Error('URL and token are required')
+      const { AgentHomeApi } = await import('./api')
+      const api = new AgentHomeApi({ baseUrl, token })
+      await api.getAgents()
+      setModalTestResult({ ok: true, message: 'Reachable — agents list loaded' })
+    } catch (e) {
+      setModalTestResult({ ok: false, message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setModalTesting(false)
+    }
+  }
+
+  // Save (create or edit) the backend from the modal fields. On create, also
+  // activate it and boot the controller onto it.
+  const handleSaveBackend = async () => {
+    setModalError(null)
+    const parsed = normalizeConnectionInput(modalConnection)
+    const baseUrl = parsed?.baseUrl ?? modalConnection.trim()
+    const token = modalToken.trim()
+    const name = modalName.trim() || baseUrl
+    if (!baseUrl || !token) {
+      setModalError('A connection URL (host:port) and a token are required.')
+      return
+    }
+    try {
+      if (editingBackendId) {
+        await saveBackend(editingBackendId, { name, baseUrl, token })
+        // If it was the active backend, re-boot to apply the new connection.
+        if (getActiveBackend()?.id === editingBackendId && controller) {
+          refreshActiveConfigView()
+          controller.boot()
+        }
+      } else {
+        const created = await upsertBackend({ name, baseUrl, token, prefs: {}, agentConfigs: {} })
+        await setActiveBackend(created.id, () => refreshActiveConfigView())
+        refreshActiveConfigView()
+        setConfig(getApiConfig())
+        setAgentConfigs(await getAgentConfigs())
+        setAgentRefreshNonce((n) => n + 1)
+        if (controller) controller.boot()
+      }
+      setBackendModalOpen(false)
+      bumpBackends()
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // Switch to a different backend immediately and boot onto it.
+  const handleSwitchBackend = async (id: string) => {
+    if (getActiveBackend()?.id === id) return
+    await setActiveBackend(id, () => refreshActiveConfigView())
+    refreshActiveConfigView()
+    setConfig(getApiConfig())
+    setAgentConfigs(await getAgentConfigs())
+    setAgentRefreshNonce((n) => n + 1)
+    if (controller) controller.boot()
+    bumpBackends()
+  }
+
+  // Remove a backend with a confirm. If it was active, the controller re-boots
+  // onto the fallback (or shows the empty state).
+  const handleRemoveBackend = async (backend: Backend) => {
+    if (!window.confirm(`Remove backend "${backend.name}"? Sessions live on the server and are not deleted.`)) return
+    const res = await removeBackend(backend.id, () => refreshActiveConfigView())
+    refreshActiveConfigView()
+    setConfig(getApiConfig())
+    setAgentConfigs(await getAgentConfigs())
+    if (res.activeChanged) {
+      setAgentRefreshNonce((n) => (isBackendConfigured(getApiConfig()) ? n + 1 : n))
+      if (controller) controller.boot()
+    }
+    bumpBackends()
   }
 
   // Copy a command string to the clipboard and flash a "Copied!" indicator on
@@ -669,25 +794,46 @@ export default function App() {
         ) : (
           <div className="settings-view">
             <section className="card config-card">
-              <h2>Backend Configuration</h2>
-              <div className="input-group" style={{ marginTop: '1rem' }}>
-                <label>Backend URL</label>
-                <input
-                  type="text"
-                  value={config.baseUrl}
-                  onChange={e => setConfig({...config, baseUrl: e.target.value})}
-                  onPaste={handleBaseUrlPaste}
-                  placeholder="http://<BACKEND_SERVER>:<PORT>"
-                />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ margin: 0 }}>Backends</h2>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  {activeBackend ? `Active: ${activeBackend.name}` : 'No active backend'}
+                </span>
               </div>
-              <div className="input-group">
-                <label>Secure Token</label>
-                <input
-                  type="password"
-                  value={config.token}
-                  onChange={e => setConfig({...config, token: e.target.value})}
-                />
+
+              <div className="backends-list" style={{ marginTop: '1rem' }}>
+                {backendsList.length === 0 && (
+                  <div className="backend-empty" style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    No backends connected. Connect your first backend to get started.
+                  </div>
+                )}
+                {backendsList.map((b) => {
+                  const isActive = activeBackend?.id === b.id
+                  return (
+                    <div
+                      key={b.id}
+                      className={`backend-row${isActive ? ' backend-row-active' : ''}`}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px', marginBottom: '8px', borderRadius: '8px', border: '1px solid var(--border-light)', background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'rgba(30, 41, 59, 0.5)', cursor: isActive ? 'default' : 'pointer' }}
+                      onClick={() => !isActive && handleSwitchBackend(b.id)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                        <span style={{ fontSize: '1.1rem' }}>{isActive ? '●' : '○'}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{b.baseUrl.replace(/^https?:\/\//, '')}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                        {isActive && <span className="backend-active-chip" style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(59, 130, 246, 0.25)', color: 'var(--text-main)' }}>active</span>}
+                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); openEditModal(b) }} style={{ padding: '5px 10px' }}>Edit</button>
+                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); handleRemoveBackend(b) }} style={{ padding: '5px 10px' }} aria-label={`Remove ${b.name}`}>⋯</button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
+
+              <button type="button" className="btn primary-btn" onClick={openConnectModal} style={{ width: '100%', marginTop: '0.5rem' }}>+ Connect New Backend</button>
             </section>
 
             <details className="card config-card">
@@ -884,6 +1030,39 @@ export default function App() {
 
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', padding: '8px 0 2px' }}>
               Agent Home v{APP_BUILD_VERSION}
+            </div>
+          </div>
+        )}
+
+        {backendModalOpen && (
+          <div className="backend-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }} onClick={() => setBackendModalOpen(false)}>
+            <div className="backend-modal card" style={{ width: 'min(92vw, 460px)', padding: '1.25rem', background: 'rgba(15, 23, 42, 0.98)' }} onClick={(e) => e.stopPropagation()}>
+              <h2 style={{ margin: '0 0 1rem 0' }}>{editingBackendId ? 'Edit Backend' : 'Connect Backend'}</h2>
+              <div className="input-group">
+                <label>Name</label>
+                <input type="text" value={modalName} onChange={(e) => setModalName(e.target.value)} placeholder="e.g. Work Laptop" />
+              </div>
+              <div className="input-group">
+                <label>Connection</label>
+                <input type="text" value={modalConnection} onChange={(e) => setModalConnection(e.target.value)} onPaste={handleModalConnectionPaste} placeholder="http://host:port?token=…  or  host:port" />
+              </div>
+              <div className="input-group">
+                <label>Token</label>
+                <input type="password" value={modalToken} onChange={(e) => setModalToken(e.target.value)} placeholder="Shared secret token" />
+              </div>
+              {modalTestResult && (
+                <div style={{ fontSize: '0.85rem', marginBottom: '0.5rem', color: modalTestResult.ok ? '#22c55e' : '#ef4444' }}>
+                  {modalTestResult.ok ? '✓ ' : '✗ '}{modalTestResult.message}
+                </div>
+              )}
+              {modalError && (
+                <div style={{ fontSize: '0.85rem', marginBottom: '0.5rem', color: '#ef4444' }}>{modalError}</div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button type="button" className="btn" onClick={handleTestBackend} disabled={modalTesting}>{modalTesting ? 'Testing…' : 'Test'}</button>
+                <button type="button" className="btn" onClick={() => setBackendModalOpen(false)}>Cancel</button>
+                <button type="button" className="btn primary-btn" onClick={handleSaveBackend}>{editingBackendId ? 'Save' : 'Connect'}</button>
+              </div>
             </div>
           </div>
         )}
