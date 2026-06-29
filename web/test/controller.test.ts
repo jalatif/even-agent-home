@@ -425,3 +425,114 @@ test('failed session-list reload restores the prior sidebar.sessions screen', as
     globalThis.fetch = originalFetch
   }
 })
+
+test('polling lands the reply when the turn ends even if backend history momentarily lags local', async () => {
+  // Regression (bugs 2/3): while thinking, the optimistic local user message
+  // makes local longer than backend history; the "never shrink" guard kept the
+  // reply from landing once the turn ended, so the user had to leave and re-enter
+  // the session to see it. The guard must only apply WHILE thinking.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: false,
+    scrollSpeed: 'medium',
+  })
+
+  let backendMessages = [
+    { role: 'user', text: 'Hello' },
+    { role: 'assistant', text: 'Hi there' },
+    { role: 'user', text: 'What model?' },
+    { role: 'assistant', text: 'Gemini Flash' },
+  ]
+  let backendStatus = 'busy'
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/status')) return { ok: true, async json() { return { state: backendStatus } } } as any
+    if (url.includes('/history')) return { ok: true, async json() { return { history: backendMessages } } } as any
+    if (url.includes('/sessions')) return { ok: true, async json() { return { sessions: [] } } } as any
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    const c = controller as unknown as {
+      state: any
+      pollTick(): Promise<void>
+      backgroundTasks: Set<string>
+    }
+    c.backgroundTasks.add('antigravity::s1')
+    c.state = {
+      screen: 'sidebar.messages', agent: 'antigravity', sessionId: 's1',
+      messages: [...backendMessages, { role: 'user', text: 'Hi' }],
+      scrollOffset: 0, isThinking: true,
+    }
+
+    // While thinking, backend still returns 4 (lag). Guard keeps local (5).
+    await c.pollTick()
+    assert.equal(c.state.messages.length, 5, 'local optimistic message preserved while thinking')
+    assert.equal(c.state.isThinking, true)
+
+    // Turn ends: backend now has the reply (6) and status=idle.
+    backendStatus = 'idle'
+    backendMessages = [...backendMessages, { role: 'user', text: 'Hi' }, { role: 'assistant', text: 'Hello!' }]
+    await c.pollTick()
+
+    assert.equal(c.state.isThinking, false, 'thinking cleared on idle')
+    assert.equal(c.state.messages.length, 6, 'reply must land once the turn ends')
+    assert.equal(c.state.messages[5].text, 'Hello!', 'landed reply text')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('polling replaces a stuck "Thinking..." placeholder when the turn ends', async () => {
+  // Regression (bug 3): backend returns a "Thinking..." placeholder as the last
+  // assistant message; when the turn ends the placeholder must be replaced by
+  // the real reply, not stuck behind the shrink guard.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: false,
+    scrollSpeed: 'medium',
+  })
+
+  let backendMessages = [
+    { role: 'user', text: 'Hello' },
+    { role: 'assistant', text: 'Thinking... ' },
+  ]
+  let backendStatus = 'busy'
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/status')) return { ok: true, async json() { return { state: backendStatus } } } as any
+    if (url.includes('/history')) return { ok: true, async json() { return { history: backendMessages } } } as any
+    if (url.includes('/sessions')) return { ok: true, async json() { return { sessions: [] } } } as any
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    const c = controller as unknown as { state: any; pollTick(): Promise<void>; backgroundTasks: Set<string> }
+    c.backgroundTasks.add('antigravity::s2')
+    c.state = {
+      screen: 'sidebar.messages', agent: 'antigravity', sessionId: 's2',
+      messages: backendMessages, scrollOffset: 0, isThinking: true,
+    }
+
+    // Turn ends: backend replaces the placeholder with the real reply.
+    backendStatus = 'idle'
+    backendMessages = [{ role: 'user', text: 'Hello' }, { role: 'assistant', text: 'Hi! How can I help?' }]
+    await c.pollTick()
+
+    assert.equal(c.state.isThinking, false)
+    assert.equal(c.state.messages[1].text, 'Hi! How can I help?', 'placeholder replaced with real reply')
+    assert.doesNotMatch(c.state.messages[1].text, /Thinking\.\.\./, 'no stale placeholder')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

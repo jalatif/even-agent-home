@@ -32,3 +32,4 @@ web/node_modules/
 .npm/
 .turbo/
 .cache/
+scripts/simulator-recorded-sessions/

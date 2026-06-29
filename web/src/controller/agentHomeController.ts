@@ -95,12 +95,17 @@ export class AgentHomeController {
       }
     }, 500)
 
-    this.pollInterval = setInterval(async () => {
+    this.pollInterval = setInterval(() => { void this.pollTick() }, 2000)
+  }
+
+  // One iteration of the polling loop. Extracted from the setInterval body so
+  // tests can drive a single tick deterministically without faking timers.
+  private async pollTick() {
       const activeAgent = (this.state.screen === 'sidebar.messages' || this.state.screen === 'sidebarSending') ? this.state.agent : null;
       const activeSessionId = (this.state.screen === 'sidebar.messages' || this.state.screen === 'sidebarSending') ? this.state.sessionId : null;
-      
+
       const api = getApi()
-      
+
       // Global discovery for external busy sessions (e.g. from a CLI prompt)
       for (const agent of this.enabledAgents) {
          try {
@@ -171,8 +176,17 @@ export class AgentHomeController {
             if (this.state.screen === 'sidebarSending' && messages.length > 0) {
                this.setState({ screen: 'sidebar.messages', agent: activeAgent, sessionId: activeSessionId, messages, scrollOffset: 0, isThinking, agentError: pollError }, { renderBridge: true })
             } else if (this.state.screen === 'sidebar.messages') {
-               // Never shrink messages — backend may not have written the latest yet
-               if (messages.length < this.state.messages.length) {
+               // While thinking, the backend history may lag behind our local
+               // optimistic message (the just-sent user text isn't persisted yet),
+               // so shrinking would flicker the user's message away. Guard against
+               // that — BUT only while still thinking. Once isThinking flips to
+               // false the turn is over and the backend's list is authoritative:
+               // we must accept it even if shorter, so the agent's reply (and any
+               // "Thinking..." placeholder replacement) actually lands instead of
+               // being stuck behind this guard. (bugs: reply-not-shown-until-
+               // reentry, stuck "Thinking..." placeholder.)
+               const wasThinking = !!this.state.isThinking;
+               if (wasThinking && messages.length < this.state.messages.length) {
                  // Keep local messages, only update thinking + error
                  const thinkingChanged = this.state.isThinking !== isThinking;
                  const errorChanged = this.state.agentError !== pollError;
@@ -185,7 +199,7 @@ export class AgentHomeController {
                const lastNew = messages[messages.length - 1]
                const textChanged = lastOld?.text !== lastNew?.text
                const lengthChanged = this.state.messages.length !== messages.length;
-               
+
                if (lengthChanged || this.state.isThinking !== isThinking || textChanged) {
                    const newScrollOffset = (lengthChanged || textChanged) ? 0 : (this.state.scrollOffset || 0);
                    this.setState({ ...this.state, messages, isThinking, scrollOffset: newScrollOffset, agentError: pollError }, { renderBridge: true, partialRender: true })
@@ -194,7 +208,6 @@ export class AgentHomeController {
           }
         } catch (e) { console.error('[poll:task]', task.agent, task.sessionId, e) }
       }
-    }, 2000)
   }
 
   private stopPolling() {

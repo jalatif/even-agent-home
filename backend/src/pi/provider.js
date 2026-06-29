@@ -523,7 +523,21 @@ function buildArgs(text, piSessionId, model, thinking) {
                 // stderr as the error message.
                 let resolvedError = lastError;
                 let success = code === 0 && !lastError;
-                if (!fullText && !sawTurnEnd) {
+                // Detect pi's interactive "Fork this session into current
+                // directory?" prompt. When the session's original cwd differs
+                // from the backend's cwd, pi prints this prompt to stderr and,
+                // because stdin is "ignore", reads EOF (= "N") and exits with no
+                // assistant output. It is NOT a real error — the session is still
+                // usable (the next prompt reuses the session cwd). Suppress it so
+                // it doesn't surface as a confusing "Agent Error" on the glasses.
+                const combinedBuffer = `${resolvedError || ""}\n${stderrBuffer}`;
+                const isForkPrompt = /Fork this session into current directory\??/i.test(combinedBuffer)
+                    && /different project|Session found in/i.test(combinedBuffer);
+                if (isForkPrompt) {
+                    success = true;
+                    resolvedError = undefined;
+                    console.log("[pi] suppressed fork-prompt (session cwd differs from backend cwd; not an error)");
+                } else if (!fullText && !sawTurnEnd) {
                     success = false;
                     if (!resolvedError && stderrBuffer.trim()) {
                         resolvedError = stderrBuffer.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
