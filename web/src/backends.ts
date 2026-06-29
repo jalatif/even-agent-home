@@ -117,3 +117,161 @@ export function pickFallbackBackend(
   const firstRemaining = registry.backends.find((b) => b.id !== removedId)
   return firstRemaining ? firstRemaining.id : null
 }
+
+// ---- Migration from the legacy single-backend keys ----
+
+/**
+ * Migrate a legacy single-backend install into a registry with one backend.
+ * Reads (never writes) the legacy `apiConfig`/`agentConfigs` keys. Returns an
+ * empty registry when the legacy config is absent or unusable (no token).
+ * Idempotent in spirit: callers only run this when the `backends` key is
+ * absent, so it runs at most once per install.
+ *
+ * Accepts the raw stored strings (not pre-parsed) so it can be unit-tested
+ * without touching storage; production passes storageGet('apiConfig') etc.
+ */
+export function migrateLegacy(
+  legacyApiConfigRaw: string | null,
+  legacyAgentConfigsRaw: string | null,
+): BackendRegistry {
+  let legacy: { baseUrl?: string; token?: string; yolo?: boolean; debugView?: boolean; autoScrollLastExchange?: boolean; scrollSpeed?: 'slow' | 'medium' | 'fast' } = {}
+  if (legacyApiConfigRaw) {
+    try {
+      legacy = JSON.parse(legacyApiConfigRaw)
+    } catch {
+      legacy = {}
+    }
+  }
+
+  const baseUrl = (legacy.baseUrl ?? '').trim()
+  const token = (legacy.token ?? '').trim()
+  if (!baseUrl || !token) {
+    return emptyRegistry()
+  }
+
+  let agentConfigs: Record<string, AgentProviderConfig> = {}
+  if (legacyAgentConfigsRaw) {
+    try {
+      agentConfigs = JSON.parse(legacyAgentConfigsRaw)
+    } catch {
+      agentConfigs = {}
+    }
+  }
+
+  const id = makeBackendId()
+  const backend: Backend = {
+    id,
+    name: nameFromBaseUrl(baseUrl),
+    baseUrl,
+    token,
+    prefs: {
+      yolo: legacy.yolo,
+      debugView: legacy.debugView,
+      autoScrollLastExchange: legacy.autoScrollLastExchange,
+      scrollSpeed: legacy.scrollSpeed,
+    },
+    agentConfigs,
+  }
+  return {
+    version: 1,
+    backends: [backend],
+    activeBackendId: id,
+    recentBackendIds: [id],
+  }
+}
+
+/** Generate a stable-ish unique id for a backend. */
+export function makeBackendId(): string {
+  // crypto.randomUUID is available in the phone WebView and in Node 20+.
+  // Fall back to a timestamp+random string for very old environments.
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+// ---- In-memory cache + hydration ----
+
+const BACKENDS_KEY = 'backends'
+
+let currentRegistry: BackendRegistry = emptyRegistry()
+let registryHydrated = false
+
+/**
+ * Reset the in-memory cache to the empty default and clear the hydrated flag.
+ * Used by tests; production code never calls this. Mirrors api.ts's
+ * __resetApiStateForTests.
+ */
+export function __resetBackendsStateForTests(): void {
+  currentRegistry = emptyRegistry()
+  registryHydrated = false
+}
+
+/**
+ * Read the registry from the persistent store and seed the in-memory cache.
+ *
+ * Mirrors hydrateApiConfig's discipline (the fix for the "re-open app lost
+ * connection" bug):
+ *   - First call hydrates from storage and sets the flag.
+ *   - Pass `force: true` to bypass the flag and re-read. This is needed after
+ *     the EvenHub bridge becomes available: the first (pre-bridge) hydration
+ *     reads the localStorage fallback and sets the flag, so without force the
+ *     post-bridge re-hydration would never consult the durable bridge KV.
+ *
+ * If the `backends` key is absent, run legacy migration (read-only over the
+ * old apiConfig/agentConfigs keys) to seed the registry, then persist it.
+ */
+export async function hydrateBackends(force = false): Promise<BackendRegistry> {
+  if (registryHydrated && !force) return currentRegistry
+
+  let registry: BackendRegistry | null = null
+  const raw = await storageGet(BACKENDS_KEY)
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as BackendRegistry
+      if (parsed && parsed.version === 1 && Array.isArray(parsed.backends)) {
+        registry = parsed
+      }
+    } catch (e) {
+      console.warn('[backends] failed to parse backends registry from storage', e)
+    }
+  }
+
+  if (!registry) {
+    // First launch on this build (or corrupt registry): migrate from legacy
+    // single-backend keys. Read-only over the legacy keys; we then persist the
+    // new registry so migration never runs again.
+    const [legacyApi, legacyAgs] = await Promise.all([
+      storageGet('apiConfig'),
+      storageGet('agentConfigs'),
+    ])
+    registry = migrateLegacy(legacyApi, legacyAgs)
+    try {
+      await storageSet(BACKENDS_KEY, JSON.stringify(registry))
+    } catch (e) {
+      console.warn('[backends] failed to persist migrated registry', e)
+    }
+  }
+
+  currentRegistry = registry
+  registryHydrated = true
+  return currentRegistry
+}
+
+/** Synchronous read of the cached registry. Kicks off an async hydrate if the
+ *  cache has not been hydrated yet (same lazy pattern as api.ts getApiConfig). */
+export function getRegistry(): BackendRegistry {
+  if (!registryHydrated) {
+    void hydrateBackends()
+  }
+  return currentRegistry
+}
+
+/** Read accessor for tests/introspection (does not trigger hydration). */
+export function peekRegistry(): BackendRegistry {
+  return currentRegistry
+}
+
+/** True once hydrateBackends has completed at least once. */
+export function isRegistryHydrated(): boolean {
+  return registryHydrated
+}
