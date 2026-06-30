@@ -43,6 +43,9 @@ function emptyRegistry(): BackendRegistry {
   return { version: 1, backends: [], activeBackendId: null, recentBackendIds: [] }
 }
 
+/** Maximum number of backends a user may have saved at once. */
+export const MAX_BACKENDS = 5
+
 // ---- Pure helpers (no storage, no side effects) ----
 
 /**
@@ -310,20 +313,20 @@ export function getActiveBackend(): Backend | null {
   return getBackend(currentRegistry.activeBackendId) ?? null
 }
 
-/** Ordered list for the UI: active first, then the rest by recency then list order. */
+/** Number of saved backends (regardless of which is active). */
+export function getBackendsCount(): number {
+  return currentRegistry.backends.length
+}
+
+/**
+ * Ordered list for the UI, in STABLE insertion order (the order backends were
+ * added). Selecting a backend as active does NOT reorder the list — the active
+ * backend is indicated by highlighting + a chip on its row, not by position —
+ * because reordering on click is disorienting. `recentBackendIds` is kept for
+ * the removeBackend fallback only.
+ */
 export function getBackendsList(): Backend[] {
-  const ids = new Set<string>()
-  const out: Backend[] = []
-  const pushIfPresent = (id: string | null) => {
-    if (id && !ids.has(id)) {
-      const b = getBackend(id)
-      if (b) { out.push(b); ids.add(id) }
-    }
-  }
-  pushIfPresent(currentRegistry.activeBackendId)
-  for (const id of currentRegistry.recentBackendIds) pushIfPresent(id)
-  for (const b of currentRegistry.backends) pushIfPresent(b.id)
-  return out
+  return currentRegistry.backends.map((b) => b)
 }
 
 /**
@@ -390,6 +393,24 @@ export async function setActiveBackend(
   if (changed && onActiveChanged) onActiveChanged()
   await persist()
   return changed
+}
+
+/**
+ * Clear the active backend (a "Stop"/disconnect): sets activeBackendId to null
+ * WITHOUT removing any backends. The active view collapses to empty defaults
+ * until the user selects a backend again. Returns true if something was
+ * actually cleared. The saved backends (and the last-active id in
+ * recentBackendIds) are preserved so re-selecting restores them.
+ */
+export async function clearActiveBackend(onActiveChanged?: () => void): Promise<boolean> {
+  if (currentRegistry.activeBackendId === null) return false
+  currentRegistry = {
+    ...currentRegistry,
+    activeBackendId: null,
+  }
+  if (onActiveChanged) onActiveChanged()
+  await persist()
+  return true
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { AppInput, AppState, ScreenModel } from './model.ts'
 import { getScreenModel, calculateInitialScrollOffset } from './model.ts'
 import { getApi, getApiConfig, getAgentConfigs } from '../api.ts'
+import { getBackendsCount } from '../backends.ts'
 import { logStateWork, logInputDispatch, nowMs } from '../testMode.ts'
 
 function wrapText(text: string, maxLen: number): string[] {
@@ -273,7 +274,13 @@ export class AgentHomeController {
     if (!cfg.baseUrl.trim() || !cfg.token.trim()) {
       if (requestId !== this.bootRequestId) return
       this.enabledAgents = []
-      this.setState({ screen: 'loading', message: 'Use phone to configure AgentHome connection settings' })
+      // Distinguish the empty/stop states: if there ARE saved backends but
+      // none is active (user stopped, or none selected yet), prompt to select
+      // one; if there are none at all, prompt to configure.
+      const message = getBackendsCount() > 0
+        ? 'Select a backend in Settings to view available agents'
+        : 'Use phone to configure AgentHome connection settings'
+      this.setState({ screen: 'loading', message })
       return
     }
     const shouldShowLoading = !options.preserveCurrentScreen || this.state.screen === 'loading'
@@ -298,9 +305,12 @@ export class AgentHomeController {
     } catch (err: any) {
       if (requestId !== this.bootRequestId) return
       const cfg = getApiConfig()
+      // We only reach here when a backend IS configured (baseUrl+token present
+      // and non-empty), so a fetch failure means the selected backend is not
+      // reachable. Surface that distinctly rather than the generic Error string.
       const msg = err.message === 'Load failed' || !cfg.baseUrl || !cfg.token
         ? 'Use phone to configure AgentHome connection settings'
-        : `Error: ${err.message}`
+        : `Unable to connect to backend — check if backend is reachable`
       if (options.preserveCurrentScreen && this.state.screen !== 'loading') {
         console.error('[boot]', msg)
         return
