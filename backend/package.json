@@ -1,7 +1,7 @@
 {
   "name": "even-agent-home",
   "version": "1.0.8",
-  "description": "Agent Home backend — HTTP bridge server that exposes multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi) to the Agent Home glasses client.",
+  "description": "Agent Home backend — HTTP bridge server that exposes multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, pi, oh-my-pi, openclaw) to the Agent Home glasses client.",
   "main": "src/index.js",
   "type": "module",
   "bin": {
@@ -19,7 +19,8 @@
   "scripts": {
     "start": "node src/index.js",
     "even-agent-home": "node bin/even-agent-home.js",
-    "test": "node ../scripts/test-openclaw-provider.mjs && node ../scripts/test-pi-session-cwd-reuse.mjs && node ../scripts/test-codex-app-server-port.mjs",
+    "test": "node ../scripts/run-backend-tests.mjs",
+    "test:integration": "node ../scripts/run-backend-tests.mjs --integration",
     "test:openclaw": "node ../scripts/test-openclaw-provider.mjs",
     "test:pi-cwd": "node ../scripts/test-pi-session-cwd-reuse.mjs",
     "test:port": "node ../scripts/test-codex-app-server-port.mjs"

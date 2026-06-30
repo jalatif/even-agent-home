@@ -126,15 +126,26 @@ export async function hydrateApiConfig(force = false): Promise<AuthConfig> {
   // connect URL so the app boots onto it. (If an active backend already
   // exists, the params just layer on top as a credential refresh.)
   if (!getActiveBackend() && explicitBaseUrl && token) {
-    const created = await upsertBackend({
-      name: nameFromBaseUrl(explicitBaseUrl),
-      baseUrl: explicitBaseUrl,
-      token,
-      prefs: {},
-      agentConfigs: {},
-    })
-    await setActiveBackend(created.id)
-    refreshActiveView()
+    try {
+      const created = await upsertBackend({
+        name: nameFromBaseUrl(explicitBaseUrl),
+        baseUrl: explicitBaseUrl,
+        token,
+        prefs: {},
+        agentConfigs: {},
+      })
+      await setActiveBackend(created.id)
+      refreshActiveView()
+    } catch {
+      // Cap reached (or another transient error) — fall through to layering
+      // the credentials onto currentConfig so the app can still boot instead
+      // of crashing on the deep-link connect path.
+      currentConfig = {
+        ...currentConfig,
+        baseUrl: explicitBaseUrl,
+        token,
+      }
+    }
   } else {
     currentConfig = {
       ...currentConfig,
@@ -264,10 +275,19 @@ export class AgentHomeApi {
     const res = await fetch(url, options);
     let data = await res.json().catch(() => ({}));
     // Decrypt incoming payload before status handling so encrypted error
-    // responses can still surface their real message on the glasses.
+    // responses can still surface their real message on the glasses. A decrypt
+    // failure (AES-GCM auth-tag mismatch from a wrong/rotated token, or a
+    // truncated payload) must surface as a DISTINCT auth error — otherwise the
+    // raw DOMException propagates and boot() misreports it as a connectivity
+    // problem ("Unable to connect to backend"), sending the user down the
+    // wrong debugging path.
     if (data.encryptedPayload) {
-      const decryptedData = await decryptPayload(data.encryptedPayload, this.config.token);
-      data = JSON.parse(decryptedData);
+      try {
+        const decryptedData = await decryptPayload(data.encryptedPayload, this.config.token);
+        data = JSON.parse(decryptedData);
+      } catch {
+        throw new Error('Authentication failed — the backend token may be incorrect or rotated. Check the backend connection token in Settings.')
+      }
     }
     if (!res.ok) {
       const message = typeof data.error === 'string' && data.error.trim()

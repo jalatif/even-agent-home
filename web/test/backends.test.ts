@@ -452,6 +452,33 @@ test('MAX_BACKENDS is 5', () => {
   assert.equal(MAX_BACKENDS, 5)
 })
 
+test('upsertBackend rejects a NEW backend beyond MAX_BACKENDS', async () => {
+  // The cap must be enforced in the registry, not just in the UI — otherwise
+  // the deep-link connect path (and any future programmatic caller) can
+  // silently exceed the limit. Editing an existing backend is never capped.
+  await seedRegistry([
+    { name: 'A', baseUrl: 'http://a:1' },
+    { name: 'B', baseUrl: 'http://b:1' },
+    { name: 'C', baseUrl: 'http://c:1' },
+    { name: 'D', baseUrl: 'http://d:1' },
+    { name: 'E', baseUrl: 'http://e:1' },
+  ])
+  assert.equal(getBackendsCount(), MAX_BACKENDS)
+
+  // A 6th NEW backend must be rejected.
+  await assert.rejects(
+    upsertBackend({ name: 'F', baseUrl: 'http://f:1', token: 't', prefs: {}, agentConfigs: {} }),
+    /maximum of 5 backends/,
+  )
+  assert.equal(getBackendsCount(), MAX_BACKENDS, 'no backend was added past the cap')
+
+  // Editing an existing backend by id is never capped.
+  const [a] = getBackendsList()
+  const edited = await upsertBackend({ id: a.id, name: 'A-renamed', baseUrl: 'http://a:2', token: 't', prefs: {}, agentConfigs: {} })
+  assert.equal(edited.name, 'A-renamed')
+  assert.equal(getBackendsCount(), MAX_BACKENDS, 'edit does not add a backend')
+})
+
 test('getBackendsList keeps stable insertion order across active switches', async () => {
   await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }, { name: 'C', baseUrl: 'http://c:1' }])
   const [a, b, c] = getBackendsList()

@@ -1,11 +1,17 @@
 /**
- * Controller Polling Integration Test
+ * Controller Polling Integration Test (LEGACY REPLICA)
  *
- * Simulates the EXACT AgentHomeController polling logic against the
- * real backend. This would have caught the dropped `let messages` bug
- * because it exercises the actual message update/comparison chain.
+ * ⚠️ DEPRECATION NOTICE: This suite re-implements the controller's polling
+ * logic inline ("Exact replica of controller polling logic") and tests the
+ * COPY against a real backend. It gives false confidence — it passes even if
+ * the real `AgentHomeController` is broken. The polling scenarios it targets
+ * (message preservation, state transitions, reply landing) are covered by the
+ * REAL controller in `web/test/controller.test.ts` (which imports
+ * `AgentHomeController` and drives `pollTick()`). This script also requires a
+ * live backend + provider CLIs, so it is fragile in CI. Prefer adding cases to
+ * controller.test.ts.
  *
- * The test:
+ * Simulates the polling logic against the real backend:
  * 1. Starts backend, opens a session
  * 2. Sends a message
  * 3. Simulates the polling loop: fetches status+history, applies

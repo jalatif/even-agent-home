@@ -132,7 +132,7 @@ if storageGet('backends') is null:
 - `upsertBackend(backend): Promise<Backend>` — insert or update by `id` (regenerates id for new). Returns the stored backend (with id).
 - `removeBackend(id): Promise<{ activeChanged: boolean; fallbackId: string | null }>` — remove; if it was active, pick fallback (most-recently-active other backend via a small `recentBackendIds` history, else first remaining, else null) and set active; persist. Returns whether the active backend changed and the new active id.
 - `saveBackend(id, patch): Promise<void>` — merge a partial patch (name/baseUrl/token/prefs/agentConfigs) into a backend; persist.
-- `getBackendsList(): Backend[]` — ordered list for the UI (active first, then by recency/name).
+- `getBackendsList(): Backend[]` — ordered list for the UI. **Implementation note:** shipped as **stable insertion order** (selecting the active backend does NOT reorder the list), not "active first" as originally specced — reordering on switch felt jittery in user testing. `recentBackendIds` is used only for `removeBackend`'s fallback, not for list ordering. `MAX_BACKENDS = 5` caps the number of backends (enforced in `upsertBackend`; editing an existing backend by id is never capped).
 
 A short **recency history** `recentBackendIds: string[]` (kept inside the registry object, persisted) records the order backends were activated so `removeBackend`'s fallback is "last used other," not arbitrary.
 
@@ -267,7 +267,7 @@ Extract decision/parsing logic from UI into pure functions in `backends.ts` and 
 | `nameFromBaseUrl(url): string` | host:port extraction; empty/weird input → `"Default"`. |
 | `normalizeConnectionInput(raw): { baseUrl, token } \| null` | full `?token=` URL → split; plain `host:port` → `http://host:port`, token `''`; garbage → null. |
 | `pickFallbackBackend(registry, removedId): string \| null` | active removed → most-recent-other; non-active removed → active unchanged; last backend removed → null. |
-| `applyDeepLink(saved, location): AuthConfig` | `?token=` refreshes token only; `?baseUrl=` overrides; empty search → unchanged; mirrors existing `hydrateApiConfig` layering tests. |
+| `applyDeepLink(saved, location): AuthConfig` | **Not extracted as a standalone helper** — deep-link layering stayed inline in `api.ts`'s `hydrateApiConfig` (which reads `configFromLocation` and layers `?token=`/`?baseUrl=` onto the active view). Listed here as the originally-planned seam; the behavior is covered by `test/storage.test.ts` ("hydrateApiConfig deep-link connect"). |
 
 ### 11.2 Registry lifecycle tests (`test/backends.test.ts`, new)
 

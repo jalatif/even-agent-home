@@ -1,11 +1,21 @@
 /**
- * Controller State Machine Invariants Test
+ * Controller State Machine Invariants Test (LEGACY REPLICA)
  *
- * Tests the critical invariants the AgentHomeController must uphold,
- * independent of the full Vite/React stack.
+ * ⚠️ DEPRECATION NOTICE: This suite re-implements the controller's poll/update
+ * logic inline and tests the COPY, not the real `AgentHomeController`. It gives
+ * false confidence — it passes even if the real controller is broken, and
+ * silently drifts when the real logic changes.
  *
- * These invariants are extracted from the actual controller logic.
- * When the controller changes, these tests MUST be updated.
+ * The AUTHORITATIVE coverage lives in `web/test/controller.test.ts`, which
+ * imports the real `AgentHomeController` class and drives it through
+ * `pollTick()`. The scenarios below (user-message-survives-send, reply-landing,
+ * history-shrink) are covered there by:
+ *   - "polling lands the reply when the turn ends even if backend history
+ *      momentarily lags local"
+ *   - "polling replaces a stuck 'Thinking...' placeholder when the turn ends"
+ *
+ * This file is kept for historical reference but should not be relied on as a
+ * regression guard. Prefer adding cases to controller.test.ts.
  */
 
 import { strict as assert } from "node:assert";

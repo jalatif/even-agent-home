@@ -625,7 +625,13 @@ export function createOpenClawProvider(emit) {
     function listSessions(limit) {
         const result = [];
         for (const [id, s] of sessions) {
-            const lastMsg = s.messages.length > 0 ? s.messages[0].content : "";
+            // In-memory messages normally use {role, content}, but a session
+            // seeded from loadMessagesFromTranscript carries {role, text}, and
+            // either shape can have a missing/empty body. Read defensively so a
+            // single malformed message can never crash the whole session list
+            // (it did: "Cannot read properties of undefined (reading 'slice')").
+            const first = s.messages.length > 0 ? s.messages[0] : null;
+            const lastMsg = String(first?.content ?? first?.text ?? "");
             result.push({
                 id,
                 title: lastMsg.slice(0, 64) || id,

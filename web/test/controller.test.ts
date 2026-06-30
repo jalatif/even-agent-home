@@ -498,6 +498,79 @@ test('polling lands the reply when the turn ends even if backend history momenta
   }
 })
 
+test('polling reconciles openclaw wrapped user-message blobs back to clean text', async () => {
+  // Regression: openclaw rewrites a resumed turn's user prompt on disk into a
+  // "[Chat messages since your last reply - for context] User: ... [Current
+  // message] User: <clean>" blob. The backend poll returns that blob; the
+  // controller holds the clean optimistic text. Without reconciliation the
+  // poll's blind replace swaps the clean message for the blob — the user's
+  // message looks mangled/gone once the reply lands. The controller must
+  // substitute the clean body back in via reconcileWrappedUserMessages.
+  __resetApiStateForTests()
+  await setApiConfig({
+    baseUrl: 'http://backend.test',
+    token: 'token',
+    autoScrollLastExchange: false,
+    scrollSpeed: 'medium',
+  })
+
+  const cleanMsg = 'Hi'
+  const wrappedMsg = `[Chat messages since your last reply - for context] User: orig Assistant: reply [Current message - respond to this] User: ${cleanMsg}`
+  let backendMessages: any[] = [
+    { role: 'user', text: 'orig' },
+    { role: 'assistant', text: 'reply' },
+    { role: 'user', text: wrappedMsg },
+  ]
+  let backendStatus = 'busy'
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/status')) return { ok: true, async json() { return { state: backendStatus } } } as any
+    if (url.includes('/history')) return { ok: true, async json() { return { history: backendMessages } } } as any
+    if (url.includes('/sessions')) return { ok: true, async json() { return { sessions: [] } } } as any
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+
+  const controller = new AgentHomeController()
+  try {
+    const c = controller as unknown as {
+      state: any
+      pollTick(): Promise<void>
+      backgroundTasks: Set<string>
+    }
+    c.backgroundTasks.add('openclaw::s1')
+    // Local holds the clean optimistic 'Hi' (what the user typed).
+    c.state = {
+      screen: 'sidebar.messages', agent: 'openclaw', sessionId: 's1',
+      messages: [
+        { role: 'user', text: 'orig' },
+        { role: 'assistant', text: 'reply' },
+        { role: 'user', text: cleanMsg },
+      ],
+      scrollOffset: 0, isThinking: true,
+    }
+
+    // Turn ends: backend returns the wrapped blob + reply, status=idle.
+    backendStatus = 'idle'
+    backendMessages = [...backendMessages, { role: 'assistant', text: 'the reply' }]
+    await c.pollTick()
+
+    assert.equal(c.state.isThinking, false, 'thinking cleared on idle')
+    assert.equal(c.state.messages.length, 4, 'reply landed')
+    // The user's message must be the CLEAN text, not the wrapped blob.
+    assert.equal(c.state.messages[2].role, 'user')
+    assert.equal(c.state.messages[2].text, cleanMsg, 'wrapped blob reconciled back to clean user text')
+    assert.equal(c.state.messages[3].text, 'the reply', 'reply untouched')
+    assert.ok(
+      !c.state.messages.some((m: any) => typeof m.text === 'string' && m.text.includes('[Chat messages')),
+      'no wrapped blob remains in the rendered messages',
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('polling replaces a stuck "Thinking..." placeholder when the turn ends', async () => {
   // Regression (bug 3): backend returns a "Thinking..." placeholder as the last
   // assistant message; when the turn ends the placeholder must be replaced by

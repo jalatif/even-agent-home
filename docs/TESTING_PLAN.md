@@ -46,7 +46,9 @@ methods, force-rehydrate after bridge ready) all flow through this layer, it
 gets its own unit suite following the pure-helpers-extracted pattern.
 
 **Pure-helper tests** (`migrateLegacy`, `nameFromBaseUrl`, `normalizeConnectionInput`,
-`pickFallbackBackend`, `applyDeepLink`):
+`pickFallbackBackend`; note: `applyDeepLink` was planned as a standalone helper but
+stayed inline in `api.ts`'s `hydrateApiConfig` — its behavior is covered by
+`test/storage.test.ts`):
 - Migration: usable legacy `apiConfig`+`agentConfigs` → one named backend set
   active (prefs + agent configs carried); unusable/missing legacy → empty
   registry; idempotent (re-hydrate never re-migrates).

@@ -2,6 +2,7 @@ import type { AppInput, AppState, ScreenModel } from './model.ts'
 import { getScreenModel, calculateInitialScrollOffset } from './model.ts'
 import { getApi, getApiConfig, getAgentConfigs } from '../api.ts'
 import { getBackendsCount } from '../backends.ts'
+import { reconcileWrappedUserMessages } from '../configHelpers.ts'
 import { logStateWork, logInputDispatch, nowMs } from '../testMode.ts'
 
 function wrapText(text: string, maxLen: number): string[] {
@@ -196,6 +197,14 @@ export class AgentHomeController {
                  }
                  continue;
                }
+               // openclaw rewrites a resumed turn's user prompt on disk into a
+               // "[Chat messages since your last reply ...] User: <clean>" blob.
+               // The backend poll returns that blob; without reconciliation the
+               // replace below swaps the user's clean optimistic message for the
+               // blob, making it look mangled/gone once the reply lands. Substitute
+               // the clean body back in wherever the blob's trailing "User: <text>"
+               // matches a local optimistic user message.
+               messages = reconcileWrappedUserMessages(messages, this.state.messages)
                const lastOld = this.state.messages[this.state.messages.length - 1]
                const lastNew = messages[messages.length - 1]
                const textChanged = lastOld?.text !== lastNew?.text

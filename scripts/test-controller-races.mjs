@@ -1,15 +1,21 @@
 /**
- * Controller Timing Chaos Test
+ * Controller Timing Chaos Test (LEGACY REPLICA)
  *
- * Simulates exact race conditions the controller must handle:
+ * ⚠️ DEPRECATION NOTICE: This suite re-implements the controller's polling
+ * logic inline ("Replica of controller polling update logic") and tests the
+ * COPY. It gives false confidence and silently drifts when the real logic
+ * changes. The race conditions it targets (idle-before-history, history-shrink,
+ * /status throw) are covered by the REAL controller in
+ * `web/test/controller.test.ts`, which imports `AgentHomeController` and
+ * drives `pollTick()` directly. Prefer adding cases there.
+ *
+ * Simulates race conditions the controller must handle:
  * - status=idle before history is ready
  * - history temporarily empty then fills
  * - history shrinks (backend returns fewer messages than local)
  * - sessionId changes while user stays on screen
  * - /status throws once, then recovers
  * - /history throws once, then recovers
- *
- * Uses the same state machine logic as AgentHomeController.
  */
 
 import { strict as assert } from "node:assert";

@@ -8,6 +8,8 @@ phone settings UI and the glasses state-machine renderer.
 - Manage **multiple backends** in a registry: each backend is a name + Backend
   URL/port + Secure Token + per-backend agent config + per-backend app prefs.
   One backend is **active** at a time (= last connected); the app boots onto it.
+  The registry is capped at **`MAX_BACKENDS = 5`** backends (enforced in
+  `upsertBackend`; the UI shows `n/5`); editing an existing backend is never capped.
 - Persist the registry through the Even Hub bridge storage API (single KV key
   `backends`), with browser `localStorage` only as a development fallback.
 - Let users connect / switch / edit / remove backends from Settings, and
@@ -15,6 +17,10 @@ phone settings UI and the glasses state-machine renderer.
 - Render the glasses UI through `EvenHubGlassesBridge`.
 - Send voice PCM to the backend `/api/transcribe` endpoint. STT provider
   selection and API keys are backend-only.
+- Reconcile provider-rewritten user messages back to clean text
+  (`reconcileWrappedUserMessages` in `configHelpers.ts`): openclaw stores resumed
+  user prompts on disk as wrapped context blobs, and the controller substitutes
+  the clean text back in on poll so the user always sees what they typed.
 
 ## Multi-Backend Connection Flow
 
@@ -56,7 +62,22 @@ npm run test:unit
 npm run test:simulator
 ```
 
-`test:unit` covers bridge/storage regressions and the multi-backend registry
-(`test/backends.test.ts`). `test:simulator` validates the glasses state-machine
-and structural render invariants. Backend-integrated polling behavior is covered
-by scripts in the repo root, especially `scripts/test-polling-controller.mjs`.
+`test:unit` (node:test over `test/**/*.test.ts`) covers:
+
+- `test/backends.test.ts` — multi-backend registry helpers, `migrateLegacy`,
+  `upsert/save/setActive/remove`, `MAX_BACKENDS` enforcement, stable ordering.
+- `test/storage.test.ts` — bridge-vs-localStorage priority, `hydrateApiConfig`,
+  per-backend `setApiConfig`/switch atomicity, deep-link auto-create.
+- `test/controller.test.ts` — the real `AgentHomeController`: boot gating,
+  stale-navigation guards, background-task tracking, poll reply-landing,
+  Thinking-placeholder replacement, and `reconcileWrappedUserMessages`
+  integration (openclaw wrapped-blob → clean text).
+- `test/configHelpers.test.ts` — `isBackendConfigured`, `formatModelName`
+  (@suffix stripping), `reconcileWrappedUserMessages` unit cases.
+- `test/bridge.test.ts`, `test/formatModelName.test.ts`.
+
+`test:simulator` validates the glasses state-machine and structural render
+invariants. Backend-side test suites live in the repo root under
+`scripts/test-*.mjs` (run via `npm test --prefix backend`, which runs the
+unit suites; `npm run test:integration --prefix backend` adds backend-dependent
+suites).

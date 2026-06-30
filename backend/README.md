@@ -1,6 +1,6 @@
 # even-agent-home
 
-The backend bridge for **Agent Home** — connects multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, oh-my-pi) to the [Even Realities](https://www.evenrealities.com) G2 smart glasses client over a local HTTP/WS bridge.
+The backend bridge for **Agent Home** — connects multi-provider AI agents (Claude, Codex, OpenCode, Hermes, Antigravity, pi, oh-my-pi, openclaw) to the [Even Realities](https://www.evenrealities.com) G2 smart glasses client over a local HTTP/WS bridge.
 
 This is the server half. The glasses-side web app lives in the parent repository at [`web/`](../web).
 

@@ -126,9 +126,9 @@ npm install
 npm run dev
 ```
 
-The web app is configured to point at `http://localhost:3456` by default;
-change the **Backend URL** in Settings to match the host where the bridge
-is running.
+The web app boots into a "please configure" state until you connect a backend.
+Open the app via the printed **Connect URL** (e.g. `http://192.168.x.x:8765?token=...`),
+or enter the **Backend URL** + **Token** manually in Settings → Connect.
 
 ### Running the integration tests
 

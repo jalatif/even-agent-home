@@ -106,13 +106,6 @@ export function startServer({ token, port = 3456, host = "0.0.0.0", allowQueryTo
         installTimestampLogging();
     });
 
-    process.on("uncaughtException", (err) => {
-        console.error(`[server] UNCAUGHT EXCEPTION: ${err.message}\n${err.stack}`);
-    });
-    process.on("unhandledRejection", (reason) => {
-        console.error(`[server] UNHANDLED REJECTION: ${reason}`);
-    });
-
     let shuttingDown = false;
     async function shutdownAndExit(code) {
         if (shuttingDown) return;
@@ -125,6 +118,23 @@ export function startServer({ token, port = 3456, host = "0.0.0.0", allowQueryTo
     process.on("exit", () => stopCodexAppServer());
     process.on("SIGINT", () => { shutdownAndExit(0); });
     process.on("SIGTERM", () => { shutdownAndExit(0); });
+
+    // Fatal errors MUST crash and let a supervisor (launchd/systemd/pm2) restart
+    // the process. After an uncaught exception the process state is undefined
+    // (partially-mutated maps, half-written streams, leaked handles), so
+    // continuing to serve requests produces a "zombie server": SSE streams
+    // hang, sessions wedge busy, child-process tables leak. Logging-only
+    // handlers also disable Node's default exit-on-unhandled-rejection (v15+).
+    // Route both through the existing graceful-shutdown path so providers are
+    // disposed and the app-server is stopped before exiting with a non-zero code.
+    process.on("uncaughtException", (err) => {
+        console.error(`[server] UNCAUGHT EXCEPTION (shutting down): ${err.message}\n${err.stack}`);
+        shutdownAndExit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+        console.error(`[server] UNHANDLED REJECTION (shutting down): ${reason}`);
+        shutdownAndExit(1);
+    });
 }
 
 // Re-export so the CLI / tests can call startServer({ token, ... }) without

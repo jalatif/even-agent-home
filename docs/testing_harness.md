@@ -63,19 +63,35 @@ but provider lifecycle bugs also need backend-integrated tests:
 ```bash
 npm run build --prefix web
 npm run test:unit --prefix web
-node scripts/test_models_harness.js
-node scripts/test-polling-controller.mjs
+npm test --prefix backend            # unit suites (run anywhere)
+npm run test:integration --prefix backend  # + suites needing a live backend / CLIs
 ```
 
+- `npm run test:unit --prefix web` runs all `web/test/**/*.test.ts` via node:test:
+  `backends`, `bridge`, `configHelpers`, `controller`, `formatModelName`,
+  `storage`. The `controller` suite imports the **real** `AgentHomeController`
+  and drives `pollTick()` (it is the authoritative guard for poll/reply/stale-
+  navigation behavior).
+- `npm test --prefix backend` runs `scripts/run-backend-tests.mjs`, which
+  executes every `scripts/test-*.mjs` that can run standalone (20 unit suites).
+  Two suites that require a live backend / provider CLIs (`test-harness.mjs`,
+  `test-provider-contracts.mjs`) are excluded unless `--integration` is passed.
 - `test_models_harness.js` protects the static model fallback tables from
   guessed or misspelled provider model IDs.
-- `test-polling-controller.mjs` exercises the real backend send -> status/history
-  polling sequence. It must continue to pass when status turns idle before
-  history catches up; that race is normal and must not produce a transient
-  glasses `Agent Error`.
+- `scripts/test-crypto-cross-side.mjs` joins the web (`web/src/crypto.ts`) and
+  backend (`backend/src/crypto.js`) AES-GCM implementations: encrypts on one
+  side and decrypts on the other, verifies the `iv(12)+authTag(16)+ciphertext`
+  wire layout, token-mismatch failure, tamper detection, and large-payload
+  chunked-btoa path.
 - A focused provider probe should be used when changing `pi` model handling:
   selected aliases like `minimax-m3` must be normalized to provider-qualified
   values from `~/.pi/agent/models.json` before spawning `pi`.
+
+> **Note on legacy replica tests:** `scripts/test-controller-state.mjs`,
+> `test-controller-races.mjs`, and `test-polling-controller.mjs` re-implement
+> the controller logic inline and test the copy (not the real
+> `AgentHomeController`). They are kept for historical reference but carry
+> deprecation headers; prefer adding cases to `web/test/controller.test.ts`.
 
 ## Multi-Backend Registry Unit Tests
 
@@ -84,7 +100,8 @@ via `npm run test:unit --prefix web`). Because `api.ts` becomes a thin
 active-view adapter over the `backends` registry, this suite is the primary
 guard for the startup/storage invariants (boot-after-hydration ordering,
 refresh-nonce gate, bound bridge storage methods, force-rehydrate after bridge
-ready). See `docs/TESTING_PLAN.md §E/§F` and the design spec
+ready, `MAX_BACKENDS=5` enforcement in `upsertBackend`). See
+`docs/TESTING_PLAN.md §E/§F` and the design spec
 `docs/superpowers/specs/2026-06-28-multi-backend-design.md` for the full plan.
 The simulator flow/fuzzy catalog is unaffected (glasses/main UI is unchanged);
 only the phone Settings UI gains a Backends section.

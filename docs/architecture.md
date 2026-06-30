@@ -17,6 +17,7 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
 - **Framework**: Node.js / Express, acting as a unified proxy and session manager.
 - **Provider Adapters**: Extends the `agent-home` provider pattern but manages all providers in a single server instance.
   - Implements uniform interfaces: `listSessions`, `getHistory`, `prompt`, `getStatus`, `getModels`.
+  - **openclaw is transcript-based**: unlike the CLI-resume providers (codex, claude, pi, …), openclaw has no `--resume` flag. Session history is reconstructed from per-session `.jsonl` transcripts on disk (`mergeHistoryWithTranscript` merges the on-disk transcript with the in-memory current turn, deduping by `role|text`). When openclaw resumes a session with prior context it rewrites the user's new prompt on disk into a wrapped `[Chat messages since your last reply - for context] … [Current message] User: <clean>` blob; the controller's `reconcileWrappedUserMessages` (`web/src/configHelpers.ts`) substitutes the clean user text back in so the glasses show what the user actually typed.
 - **Session Management**: 
   - Keeps track of `phoneSessionId -> providerSessionId` mappings for all providers.
   - Filters out empty sessions.
@@ -26,7 +27,7 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
 
 ## Data Flow
 
-1. **Pairing / Backends**: Phone UI manages a **registry of backends**, each added via a Connect modal (name + URL/port + token; pasting the full backend `?token=` connect URL auto-splits URL and token). All agent config and app prefs are stored **per backend**. The user selects one backend as active; the app connects to it over HTTP/SSE. The last-connected backend is remembered and auto-connected on startup. QR/camera scanning is not supported because Even Hub plugin WebViews do not expose phone camera APIs. Existing single-backend installs are auto-imported into the registry on upgrade (one named backend, set active).
+1. **Pairing / Backends**: Phone UI manages a **registry of backends**, each added via a Connect modal (name + URL/port + token; pasting the full backend `?token=` connect URL auto-splits URL and token). All agent config and app prefs are stored **per backend**. The user selects one backend as active; the app connects to it over HTTP/SSE. The last-connected backend is remembered and auto-connected on startup. The registry is capped at **`MAX_BACKENDS = 5`** backends (enforced in `upsertBackend`, surfaced in the UI as `n/5`); editing an existing backend is never capped. QR/camera scanning is not supported because Even Hub plugin WebViews do not expose phone camera APIs. Existing single-backend installs are auto-imported into the registry on upgrade (one named backend, set active).
 2. **Boot**: Phone UI fetches available agents and their supported models from Backend. Backend performs an availability scan (`command -v`) to return `{ id, available }` for each agent.
 3. **Agent Selection (Glasses)**: User selects an agent -> Frontend requests `listSessions(provider)` -> displays New Session + recent sessions. Unavailable agents are displayed but visually grayed out on the Phone UI and disabled.
 4. **Session View (Glasses)**: User selects session -> Frontend requests `getHistory(sessionId)` -> populates up to 50 messages.

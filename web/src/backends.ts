@@ -338,9 +338,17 @@ export function getBackendsList(): Backend[] {
  * Insert or update a backend by id. For a new backend (no id / id not found),
  * a fresh id is generated and the backend is appended. Returns the stored
  * backend (with its id). Does NOT change which backend is active.
+ *
+ * Enforces the MAX_BACKENDS cap for NEW backends: callers that try to add a
+ * backend beyond the limit receive a rejected promise with a descriptive error
+ * (so the UI can surface it and the deep-link connect path can't silently
+ * exceed the cap). Editing an existing backend by id is never capped.
  */
 export async function upsertBackend(input: Omit<Backend, 'id'> & { id?: string }): Promise<Backend> {
   const existing = input.id ? getBackend(input.id) : undefined
+  if (!existing && getBackendsCount() >= MAX_BACKENDS) {
+    throw new Error(`Cannot add backend: the maximum of ${MAX_BACKENDS} backends is already reached. Remove an existing backend first.`)
+  }
   let stored: Backend
   if (existing) {
     stored = { ...existing, ...input, id: existing.id }
