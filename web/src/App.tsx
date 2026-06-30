@@ -20,11 +20,14 @@ import { hydrateSimSettings, emitSettingsSnapshot, isSimSession } from './sim-se
 import {
   getBackendsList,
   getActiveBackend,
+  getBackendsCount,
   setActiveBackend,
+  clearActiveBackend,
   removeBackend,
   upsertBackend,
   saveBackend,
   normalizeConnectionInput,
+  MAX_BACKENDS,
   type Backend,
 } from './backends'
 import './style.css'
@@ -151,9 +154,12 @@ export default function App() {
   const [modalTesting, setModalTesting] = useState(false)
   const [modalTestResult, setModalTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [modalError, setModalError] = useState<string | null>(null)
+  // Backend pending in-app remove confirmation (null = no confirm dialog open).
+  const [removingBackend, setRemovingBackend] = useState<Backend | null>(null)
 
   const activeBackend = getActiveBackend()
   const backendsList = getBackendsList()
+  const backendsCount = getBackendsCount()
   // suppress unused-var lint for the bump trigger
   void backendsVersion
 
@@ -300,8 +306,14 @@ export default function App() {
 
   // ---- Multi-backend handlers ----
 
-  // Open the modal to connect a NEW backend.
+  // Open the modal to connect a NEW backend. Capped at MAX_BACKENDS: if the
+  // user is already at the limit, warn and ask them to remove one rather than
+  // silently refusing or opening the form.
   const openConnectModal = () => {
+    if (getBackendsCount() >= MAX_BACKENDS) {
+      window.alert(`You can connect at most ${MAX_BACKENDS} backends. Remove an existing backend to add a new one.`)
+      return
+    }
     setEditingBackendId(null)
     setModalName('')
     setModalConnection('')
@@ -404,10 +416,32 @@ export default function App() {
     bumpBackends()
   }
 
-  // Remove a backend with a confirm. If it was active, the controller re-boots
-  // onto the fallback (or shows the empty state).
-  const handleRemoveBackend = async (backend: Backend) => {
-    if (!window.confirm(`Remove backend "${backend.name}"? Sessions live on the server and are not deleted.`)) return
+  // Stop the active backend: keep it (and all others) saved, but clear the
+  // active backend so the app shows the "select a backend" state until the
+  // user picks one again. Distinct from remove (which deletes the entry).
+  const handleStopBackend = async () => {
+    const changed = await clearActiveBackend(() => refreshActiveConfigView())
+    if (!changed) return
+    refreshActiveConfigView()
+    setConfig(getApiConfig())
+    setAgentConfigs(await getAgentConfigs())
+    setAgentRefreshNonce((n) => (isBackendConfigured(getApiConfig()) ? n + 1 : n))
+    if (controller) controller.boot()
+    bumpBackends()
+  }
+
+  // Stage a backend for in-app remove confirmation. The confirm dialog is
+  // rendered from `removingBackend`; window.confirm is unreliable in WebViews.
+  const handleRemoveBackend = (backend: Backend) => {
+    setRemovingBackend(backend)
+  }
+
+  // Actually remove the backend the user confirmed. If it was active, the
+  // controller re-boots onto the fallback (or shows the empty/select state).
+  const confirmRemoveBackend = async () => {
+    const backend = removingBackend
+    if (!backend) return
+    setRemovingBackend(null)
     const res = await removeBackend(backend.id, () => refreshActiveConfigView())
     refreshActiveConfigView()
     setConfig(getApiConfig())
@@ -620,9 +654,14 @@ export default function App() {
     if (!screenState) return <div>Loading interface...</div>
 
     if (!isConfigured && screenState.screen === 'loading' && agents.length === 0) {
+      const hasBackends = getBackendsCount() > 0
       return (
         <div className="glasses-empty-state">
-          <p>Please configure your settings to connect to the backend server for agent access.</p>
+          <p>
+            {hasBackends
+              ? 'Select a backend in Settings to view available agents.'
+              : 'Please configure your settings to connect to the backend server for agent access.'}
+          </p>
           <button className="btn primary-btn" onClick={() => setActiveTab('settings')}>Go to Settings</button>
         </div>
       )
@@ -815,8 +854,8 @@ export default function App() {
             <section className="card config-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2 style={{ margin: 0 }}>Backends</h2>
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  {activeBackend ? `Active: ${activeBackend.name}` : 'No active backend'}
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  {backendsCount}/{MAX_BACKENDS}
                 </span>
               </div>
 
@@ -832,20 +871,23 @@ export default function App() {
                     <div
                       key={b.id}
                       className={`backend-row${isActive ? ' backend-row-active' : ''}`}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px', marginBottom: '8px', borderRadius: '8px', border: '1px solid var(--border-light)', background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'rgba(30, 41, 59, 0.5)', cursor: isActive ? 'default' : 'pointer' }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px', marginBottom: '8px', borderRadius: '8px', border: `1px solid ${isActive ? 'rgba(34, 197, 94, 0.55)' : 'var(--border-light)'}`, background: isActive ? 'rgba(34, 197, 94, 0.14)' : 'rgba(30, 41, 59, 0.5)', cursor: isActive ? 'default' : 'pointer' }}
                       onClick={() => !isActive && handleSwitchBackend(b.id)}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                        <span style={{ fontSize: '1.1rem' }}>{isActive ? '●' : '○'}</span>
+                        <span style={{ fontSize: '1.1rem', color: isActive ? '#22c55e' : 'var(--text-muted)', lineHeight: 1 }}>{isActive ? '●' : '○'}</span>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600, color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</div>
                           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{b.baseUrl.replace(/^https?:\/\//, '')}</div>
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                        {isActive && <span className="backend-active-chip" style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(59, 130, 246, 0.25)', color: 'var(--text-main)' }}>active</span>}
+                        {isActive && <span className="backend-active-chip" style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(34, 197, 94, 0.25)', color: '#22c55e' }}>active</span>}
+                        {isActive && (
+                          <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); void handleStopBackend() }} style={{ padding: '5px 10px' }} title="Stop (disconnect) this backend without removing it">Stop</button>
+                        )}
                         <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); openEditModal(b) }} style={{ padding: '5px 10px' }}>Edit</button>
-                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); handleRemoveBackend(b) }} style={{ padding: '5px 10px' }} aria-label={`Remove ${b.name}`}>⋯</button>
+                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); handleRemoveBackend(b) }} style={{ padding: '5px 10px' }} aria-label={`Remove ${b.name}`} title="Remove this backend">Remove</button>
                       </div>
                     </div>
                   )
@@ -934,7 +976,7 @@ export default function App() {
             </details>
 
             <section className="card config-card">
-              <h2>Agent Configuration</h2>
+              <h2>Agent Configuration{activeBackend ? ` — ${activeBackend.name}` : ''}</h2>
               <div className="agent-list">
                 {agents.map(agent => {
                   const modelOptions = modelsByAgent[agent.id] || []
@@ -1081,6 +1123,21 @@ export default function App() {
                 <button type="button" className="btn" onClick={handleTestBackend} disabled={modalTesting}>{modalTesting ? 'Testing…' : 'Test'}</button>
                 <button type="button" className="btn" onClick={() => setBackendModalOpen(false)}>Cancel</button>
                 <button type="button" className="btn primary-btn" onClick={handleSaveBackend}>{editingBackendId ? 'Save' : 'Connect'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {removingBackend && (
+          <div className="backend-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
+            <div className="backend-modal card" style={{ width: 'min(92vw, 420px)', padding: '1.25rem', background: 'rgba(15, 23, 42, 0.98)' }}>
+              <h2 style={{ margin: '0 0 0.5rem 0' }}>Remove backend?</h2>
+              <p style={{ margin: '0 0 1rem 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                Remove “{removingBackend.name}”? Sessions live on the server and are not deleted.
+              </p>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setRemovingBackend(null)}>Cancel</button>
+                <button type="button" className="btn" style={{ background: '#ef4444', color: '#fff', border: 'none' }} onClick={() => void confirmRemoveBackend()}>Remove</button>
               </div>
             </div>
           </div>

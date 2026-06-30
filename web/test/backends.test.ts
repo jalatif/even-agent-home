@@ -282,10 +282,13 @@ import {
   upsertBackend,
   saveBackend,
   setActiveBackend,
+  clearActiveBackend,
   removeBackend,
   getActiveBackend,
   getBackendsList,
+  getBackendsCount,
   getBackend,
+  MAX_BACKENDS,
 } from '../src/backends.ts'
 
 // Helper: hydrate an empty registry into a known cache state for op tests.
@@ -332,7 +335,10 @@ test('setActiveBackend: flips active, moves to front of recency, calls hook', as
   const changed = await setActiveBackend(b.id, () => { hookCalls++ })
   assert.equal(changed, true)
   assert.equal(getActiveBackend()?.id, b.id)
-  assert.equal(getBackendsList()[0].id, b.id, 'active backend should be first in list')
+  // Ordering is STABLE (insertion order) — selecting a backend as active must
+  // NOT reorder the list. A is still first even though B is now active.
+  assert.equal(getBackendsList()[0].id, a.id, 'list order must not change on active switch')
+  assert.equal(getBackendsList()[1].id, b.id)
   // Switch to B again -> no change, hook must NOT fire.
   const changed2 = await setActiveBackend(b.id, () => { hookCalls++ })
   assert.equal(changed2, false)
@@ -396,4 +402,63 @@ test('removeBackend: last backend removal yields empty registry, null active', a
   assert.equal(res.fallbackId, null)
   assert.equal(getActiveBackend(), null)
   assert.equal(getBackendsList().length, 0)
+})
+
+// ---- clearActiveBackend (Stop) + count/max + stable ordering ----
+
+test('clearActiveBackend: clears active without removing any backend', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }])
+  const [a] = getBackendsList()
+  await setActiveBackend(a.id)
+  assert.equal(getActiveBackend()?.id, a.id)
+  // Stop: active is cleared but both backends are still saved.
+  const changed = await clearActiveBackend(() => {})
+  assert.equal(changed, true)
+  assert.equal(getActiveBackend(), null)
+  assert.equal(getBackendsList().length, 2, 'backends must NOT be removed on stop')
+  // getBackendsCount reflects saved (not active) backends.
+  assert.equal(getBackendsCount(), 2)
+})
+
+test('clearActiveBackend: returns false when nothing is active', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }])
+  // Nothing activated yet -> clear is a no-op.
+  const changed = await clearActiveBackend(() => {})
+  assert.equal(changed, false)
+  assert.equal(getActiveBackend(), null)
+})
+
+test('clearActiveBackend then re-select restores the backend as active', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }])
+  const [a] = getBackendsList()
+  await setActiveBackend(a.id)
+  await clearActiveBackend(() => {})
+  assert.equal(getActiveBackend(), null)
+  // Re-selecting the same backend re-activates it.
+  await setActiveBackend(a.id)
+  assert.equal(getActiveBackend()?.id, a.id)
+})
+
+test('getBackendsCount counts saved backends regardless of active', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }])
+  assert.equal(getBackendsCount(), 2)
+  await setActiveBackend(getBackendsList()[0].id)
+  assert.equal(getBackendsCount(), 2)
+  await clearActiveBackend(() => {})
+  assert.equal(getBackendsCount(), 2)
+})
+
+test('MAX_BACKENDS is 5', () => {
+  assert.equal(MAX_BACKENDS, 5)
+})
+
+test('getBackendsList keeps stable insertion order across active switches', async () => {
+  await seedRegistry([{ name: 'A', baseUrl: 'http://a:1' }, { name: 'B', baseUrl: 'http://b:1' }, { name: 'C', baseUrl: 'http://c:1' }])
+  const [a, b, c] = getBackendsList()
+  // Activate in a non-insertion order; list order must not move.
+  await setActiveBackend(c.id)
+  await setActiveBackend(a.id)
+  await setActiveBackend(b.id)
+  const list = getBackendsList().map((x) => x.id)
+  assert.deepEqual(list, [a.id, b.id, c.id], 'insertion order must be preserved')
 })
