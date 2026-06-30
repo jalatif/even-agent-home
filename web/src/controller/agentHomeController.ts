@@ -560,9 +560,10 @@ export class AgentHomeController {
     } catch (e) {
       if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
-      const errDetail = e instanceof Error ? e.message : String(e ?? '')
-      // Truncate the detail to fit the ~120-byte glasses footer constraint
-      const detail = errDetail.slice(0, 80) + (errDetail.length > 80 ? '…' : '')
+      const errDetail = e instanceof Error ? (e.stack || e.message) : String(e ?? '')
+      // Truncate the detail to fit the glasses footer constraint, but show
+      // enough to identify the exact source line.
+      const detail = errDetail.length > 300 ? errDetail.slice(0, 300) + '…' : errDetail
       const base = `Could not load ${agent} sessions — ${detail || 'agent may be unavailable'}. Tap or double-tap to go back.`
       // error so the user knows something went wrong (silent restore from
       // sidebar.agents looks like "clicking does nothing"). A tap or
