@@ -338,6 +338,20 @@ export class AgentHomeController {
       }
     }
 
+    if (this.state.screen === 'loading') {
+      // `loading` is normally a TRANSIENT screen that a caller replaces once
+      // its async work resolves. But when it carries an error message (e.g.
+      // "Could not load openclaw sessions"), it's deliberately persistent so
+      // the user can see what went wrong. Any gesture (press, swipe,
+      // doublePress) recovers to the agents list — doublePress previously
+      // went to shutdown (the boot path at line 348), which made the screen
+      // go black with no way back. Boot is the instinctive escape.
+      if (input.type === 'press' || input.type === 'swipeUp' || input.type === 'swipeDown' || input.type === 'doublePress') {
+        this.boot({ skipLoading: true })
+      }
+      return
+    }
+
     if (input.type === 'doublePress') {
       if (this.state.screen === 'notification') {
         this.setState(this.state.previous || { screen: 'loading', message: 'Loading...' }, { renderBridge: true })
@@ -345,13 +359,8 @@ export class AgentHomeController {
         await this.openSessionsList(this.state.agent)
       } else if (this.state.screen === 'sidebar.sessions') {
         await this.boot({ skipLoading: true }) // Back to agents
-      } else if (this.state.screen === 'sidebar.agents' || this.state.screen === 'loading') {
-        // `loading` is the root page at boot — it is the screen the user lands
-        // on before any agent/session is open (and stays there whenever the
-        // backend is unreachable or unconfigured). A double-tap here must reach
-        // the exit path, otherwise `shutDownPageContainer` is bundled but never
-        // invoked from the initial page. This branch mirrors the agent-list
-        // behavior: prefer the SDK shutdown, else fall back to screen-off.
+      } else if (this.state.screen === 'sidebar.agents') {
+        // From the agents list, doublePress exits the app.
         if (this.bridge?.showExitConfirmation) {
           await this.bridge.showExitConfirmation()
         } else if (this.bridge?.turnScreenOff) {
@@ -369,23 +378,6 @@ export class AgentHomeController {
     if (this.state.screen === 'notification') {
       if (input.type === 'press') {
         await this.openSession(this.state.agent, this.state.sessionId);
-      }
-      return;
-    }
-
-    if (this.state.screen === 'loading') {
-      // `loading` is normally a TRANSIENT screen that a caller (boot,
-      // openSession, openSessionsList) replaces once its async work resolves.
-      // But the navigation stale-guards can maroon the controller here if the
-      // user double-taps back quickly: a second openSessionsList captures
-      // previousState.screen === 'loading', and a subsequent boot() setState
-      // can be swallowed by a stale guard — leaving every other input as a
-      // no-op (the "stuck, can't go back" symptom, esp. with openclaw whose
-      // getSessions is slow). A tap is the user's instinctive escape, so make
-      // it recover: re-boot to land on the agents list. doublePress still
-      // reaches the shutdown path in the block above.
-      if (input.type === 'press' || input.type === 'swipeUp' || input.type === 'swipeDown') {
-        this.boot({ skipLoading: true })
       }
       return;
     }
@@ -568,16 +560,19 @@ export class AgentHomeController {
     } catch (e) {
       if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
-      // On error, don't silently restore the previous screen — show a visible
+      const errDetail = e instanceof Error ? e.message : String(e ?? '')
+      // Truncate the detail to fit the ~120-byte glasses footer constraint
+      const detail = errDetail.slice(0, 80) + (errDetail.length > 80 ? '…' : '')
+      const base = `Could not load ${agent} sessions — ${detail || 'agent may be unavailable'}. Tap or double-tap to go back.`
       // error so the user knows something went wrong (silent restore from
-      // sidebar.agents looks like "clicking does nothing"). A tap on this
-      // error-loading screen recovers via the loading recovery path (boot).
+      // sidebar.agents looks like "clicking does nothing"). A tap or
+      // double-tap on this loading screen recovers to the agents list.
       if (previousState.screen === 'sidebar.messages' || previousState.screen === 'sidebarSending') {
         await this.boot({ skipLoading: true })
       } else if (previousState.screen === 'sidebar.agents') {
-        this.setState({ screen: 'loading', message: `Could not load ${agent} sessions — agent may be unavailable. Tap to go back.` }, { renderBridge: true })
+        this.setState({ screen: 'loading', message: base }, { renderBridge: true })
       } else if (previousState.screen === 'sidebar.sessions') {
-        this.setState({ screen: 'loading', message: `Could not load ${agent} sessions. Tap to go back.` }, { renderBridge: true })
+        this.setState({ screen: 'loading', message: base }, { renderBridge: true })
       } else {
         // 'loading' or any other transient screen → go to agents list.
         await this.boot()

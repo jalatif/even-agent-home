@@ -54,30 +54,27 @@ test('root double press uses shutdown bridge instead of screen-off fallback', as
   assert.equal(controller.getState().screen, 'sidebar.agents')
 })
 
-test('double press on the boot (loading) root page fires showExitConfirmation', async () => {
+test('double press on the boot (loading) root page boots to agents instead of shutting down', async () => {
   __resetApiStateForTests()
 
-  const calls: string[] = []
-  const controller = new AgentHomeController({
-    async render() {},
-    async setAudioEnabled() {},
-    async showExitConfirmation() {
-      calls.push('showExitConfirmation')
-    },
-    async turnScreenOff() {
-      calls.push('turnScreenOff')
-    },
-  })
+  const controller = new AgentHomeController()
 
   // `boot()` with no backend config leaves the controller on the `loading`
   // screen — that is the actual root page a user sees at startup before the
-  // agent list resolves. A double-tap there must reach the exit path.
+  // agent list resolves or a backend is configured. A double-tap there must
+  // attempt to recover (boot), not exit — otherwise the error-loading screen
+  // ("Could not load openclaw sessions") would also go to shutdown, making
+  // the screen go black. Boot is the instinctive escape.
   await controller.boot()
   assert.equal(controller.getState().screen, 'loading')
+  assert.match(controller.getState().message ?? '', /configure AgentHome/)
 
   await controller.handleInput({ type: 'doublePress' })
 
-  assert.deepEqual(calls, ['showExitConfirmation'])
+  // Boot finds nothing to configure, so we stay on the loading/configure screen
+  // — but the important thing is we did NOT shut down.
+  assert.equal(controller.getState().screen, 'loading')
+  assert.match(controller.getState().message ?? '', /configure AgentHome/)
 })
 
 test('preserved boot refresh does not blank an active glasses screen', async () => {
@@ -568,19 +565,14 @@ test('press on a stuck loading screen recovers to the agents list (double-tap-ra
   assert.equal(controller.getState().screen, 'loading')
   assert.match(controller.getState().message ?? '', /configure AgentHome/, 'boot() gated on empty config shows the configure message')
 
-  // doublePress on loading still reaches the shutdown path (unchanged).
-  let shownExit = false
-  let screenOff = false
-  const bridgeCtrl = new AgentHomeController({
-    async render() {},
-    async setAudioEnabled() {},
-    async showExitConfirmation() { shownExit = true },
-    async turnScreenOff() { screenOff = true },
-  })
+  // doublePress on loading now also boots to agents list (not shutdown),
+  // so the error loading screen ("Could not load ...") doesn't go black.
+  const bridgeCtrl = new AgentHomeController()
   ;(bridgeCtrl as unknown as { state: unknown }).state = {
     screen: 'loading',
     message: 'Loading openclaw...',
   }
   await bridgeCtrl.handleInput({ type: 'doublePress' })
-  assert.ok(shownExit || screenOff, 'doublePress on loading must reach shutdown')
+  assert.equal(bridgeCtrl.getState().screen, 'loading')
+  assert.match(bridgeCtrl.getState().message ?? '', /configure AgentHome/, 'doublePress on loading must boot, not shut down')
 })
