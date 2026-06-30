@@ -517,3 +517,11 @@ button.stop-btn:hover {
   border: 1px dashed var(--border-light);
   border-radius: 8px;
 }
+
+/* Per-row ⋯ actions menu. */
+.backend-menu-toggle:hover {
+  background: rgba(59, 130, 246, 0.12);
+}
+.backend-menu-item:not(:disabled):hover {
+  background: rgba(59, 130, 246, 0.14);
+}
