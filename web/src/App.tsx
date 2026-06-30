@@ -156,12 +156,35 @@ export default function App() {
   const [modalError, setModalError] = useState<string | null>(null)
   // Backend pending in-app remove confirmation (null = no confirm dialog open).
   const [removingBackend, setRemovingBackend] = useState<Backend | null>(null)
+  // Per-row ⋯ menu: the backend id whose menu is open (null = all closed).
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
 
   const activeBackend = getActiveBackend()
   const backendsList = getBackendsList()
   const backendsCount = getBackendsCount()
   // suppress unused-var lint for the bump trigger
   void backendsVersion
+
+  // Close the per-row ⋯ menu when clicking outside it (or pressing Escape).
+  useEffect(() => {
+    if (!openMenuId) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Element | null
+      // Ignore clicks inside the menu itself or on a ⋯ toggle (those handle
+      // their own open/close).
+      if (target?.closest('[data-backend-menu]') || target?.closest('[data-backend-menu-toggle]')) return
+      setOpenMenuId(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenuId(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [openMenuId])
 
   // Simulator record/replay: restore recorded settings BEFORE the app boots,
   // then emit a settings snapshot so the skill can capture the current config.
@@ -881,13 +904,48 @@ export default function App() {
                           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{b.baseUrl.replace(/^https?:\/\//, '')}</div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, position: 'relative' }}>
                         {isActive && <span className="backend-active-chip" style={{ fontSize: '0.7rem', padding: '3px 8px', borderRadius: '999px', background: 'rgba(34, 197, 94, 0.25)', color: '#22c55e' }}>active</span>}
-                        {isActive && (
-                          <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); void handleStopBackend() }} style={{ padding: '5px 10px' }} title="Stop (disconnect) this backend without removing it">Stop</button>
+                        <button
+                          type="button"
+                          className="btn backend-menu-toggle"
+                          data-backend-menu-toggle
+                          onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === b.id ? null : b.id) }}
+                          style={{ padding: '5px 12px', fontSize: '1.1rem', lineHeight: 1 }}
+                          aria-label={`Actions for ${b.name}`}
+                          aria-haspopup="menu"
+                          aria-expanded={openMenuId === b.id}
+                          title="Backend actions"
+                        >⋯</button>
+                        {openMenuId === b.id && (
+                          <div
+                            data-backend-menu
+                            className="backend-menu"
+                            style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '150px', background: 'rgba(15, 23, 42, 0.98)', border: '1px solid var(--border-light)', borderRadius: '8px', boxShadow: '0 12px 30px rgba(0,0,0,0.45)', zIndex: 40, overflow: 'hidden' }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="backend-menu-item"
+                              disabled={!isActive}
+                              onClick={() => { setOpenMenuId(null); if (isActive) void handleStopBackend() }}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'transparent', border: 'none', color: isActive ? 'var(--text-main)' : 'var(--text-muted)', cursor: isActive ? 'pointer' : 'not-allowed', opacity: isActive ? 1 : 0.45, fontSize: '0.92rem' }}
+                              title={isActive ? 'Stop (disconnect) this backend without removing it' : 'Only the active backend can be stopped'}
+                            >Stop</button>
+                            <button
+                              type="button"
+                              className="backend-menu-item"
+                              onClick={() => { setOpenMenuId(null); openEditModal(b) }}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'transparent', border: 'none', borderTop: '1px solid var(--border-light)', color: 'var(--text-main)', cursor: 'pointer', fontSize: '0.92rem' }}
+                            >Edit</button>
+                            <button
+                              type="button"
+                              className="backend-menu-item"
+                              onClick={() => { setOpenMenuId(null); handleRemoveBackend(b) }}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'transparent', border: 'none', borderTop: '1px solid var(--border-light)', color: '#ef4444', cursor: 'pointer', fontSize: '0.92rem' }}
+                            >Remove</button>
+                          </div>
                         )}
-                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); openEditModal(b) }} style={{ padding: '5px 10px' }}>Edit</button>
-                        <button type="button" className="btn" onClick={(e) => { e.stopPropagation(); handleRemoveBackend(b) }} style={{ padding: '5px 10px' }} aria-label={`Remove ${b.name}`} title="Remove this backend">Remove</button>
                       </div>
                     </div>
                   )
