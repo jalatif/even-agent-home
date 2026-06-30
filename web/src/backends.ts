@@ -313,6 +313,11 @@ export function getActiveBackend(): Backend | null {
   return getBackend(currentRegistry.activeBackendId) ?? null
 }
 
+/** The active backend's id, or null when none is active. Sync, for race guards. */
+export function getActiveBackendId(): string | null {
+  return currentRegistry.activeBackendId
+}
+
 /** Number of saved backends (regardless of which is active). */
 export function getBackendsCount(): number {
   return currentRegistry.backends.length

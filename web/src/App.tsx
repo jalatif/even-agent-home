@@ -15,11 +15,12 @@ import { AgentHomeController } from './controller/agentHomeController'
 import { APP_BUILD_VERSION, EvenHubGlassesBridge } from './bridge/evenBridge'
 import type { AppState } from './controller/model'
 import { registerBridgeStorage } from './storage'
-import { isBackendConfigured } from './configHelpers'
+import { isBackendConfigured, formatModelName } from './configHelpers'
 import { hydrateSimSettings, emitSettingsSnapshot, isSimSession } from './sim-settings'
 import {
   getBackendsList,
   getActiveBackend,
+  getActiveBackendId,
   getBackendsCount,
   setActiveBackend,
   clearActiveBackend,
@@ -31,27 +32,6 @@ import {
   type Backend,
 } from './backends'
 import './style.css'
-
-function formatModelName(m: string): string {
-  if (m === '') return 'Default'
-
-  // Modern claude model names (claude-opus-4-5, claude-sonnet-4-6, …) — handle
-  // via the generic regex below rather than hardcoding each dated variant.
-  if (m.startsWith('claude-')) {
-    const match = m.match(/^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?(?:-.*)?$/i);
-    if (match) {
-      const type = match[1].charAt(0).toUpperCase() + match[1].slice(1);
-      const major = match[2];
-      const minor = match[3];
-      return `${type} ${major}${minor ? `.${minor}` : ''}`;
-    }
-  }
-
-  if (m.startsWith('gpt-4o')) return 'GPT-4o'
-  if (m === 'gpt-4-turbo') return 'GPT-4 Turbo'
-  if (m === 'gpt-4') return 'GPT-4'
-  return m.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-}
 
 /**
  * The model to pre-select for a freshly-configured agent (or when the saved
@@ -448,6 +428,13 @@ export default function App() {
     refreshActiveConfigView()
     setConfig(getApiConfig())
     setAgentConfigs(await getAgentConfigs())
+    // No backend is active after a stop: clear the agent/model lists so the
+    // Agent Configuration section renders empty (rather than the previous
+    // backend's stale agents with no backend name alongside).
+    if (!getActiveBackend()) {
+      setAgents([])
+      setModelsByAgent({})
+    }
     setAgentRefreshNonce((n) => (isBackendConfigured(getApiConfig()) ? n + 1 : n))
     if (controller) controller.boot()
     bumpBackends()
@@ -469,6 +456,13 @@ export default function App() {
     refreshActiveConfigView()
     setConfig(getApiConfig())
     setAgentConfigs(await getAgentConfigs())
+    if (!getActiveBackend()) {
+      // No backend active (last one removed, or the active one was removed
+      // with no fallback): clear stale agents/models so Agent Configuration
+      // is empty instead of showing the removed backend's agent list.
+      setAgents([])
+      setModelsByAgent({})
+    }
     if (res.activeChanged) {
       setAgentRefreshNonce((n) => (isBackendConfigured(getApiConfig()) ? n + 1 : n))
       if (controller) controller.boot()
@@ -505,6 +499,14 @@ export default function App() {
 
   const refreshAgentsAndModels = useCallback((isCancelled: () => boolean) => {
     const api = getApi()
+    // Capture the backend this refresh is for. If the user switches backends
+    // while the async model fetches are in flight (or a refresh retry fires
+    // later), the result must NOT be written back — otherwise the new active
+    // backend's saved agentConfigs get clobbered with the old backend's
+    // freshly-defaulted configs (the "configs revert to defaults on switch"
+    // bug). Both the external cancel flag and this id guard must hold.
+    const refreshBackendId = getActiveBackendId()
+    const sameBackend = () => !isCancelled() && getActiveBackendId() === refreshBackendId
     const refreshModelLists = async (agentStatuses: AgentStatus[], attempt = 0) => {
       const modelsMap: Record<string, string[]> = {}
       const newConfigs = { ...(await getAgentConfigs()) }
@@ -553,21 +555,24 @@ export default function App() {
         }
       }))
 
-      if (isCancelled()) return
+      // If the active backend changed mid-fetch, drop the result entirely —
+      // writing newConfigs (built from this backend's view) onto a different
+      // active backend would clobber that backend's saved agentConfigs.
+      if (!sameBackend()) return
       setModelsByAgent(prev => ({ ...prev, ...modelsMap }))
       setAgentConfigs(newConfigs)
       void saveAgentConfigs(newConfigs)
 
       if (pending.length > 0 && attempt < 5) {
         window.setTimeout(() => {
-          if (!isCancelled()) refreshModelLists(agentStatuses.filter(agent => pending.includes(agent.id)), attempt + 1)
+          if (sameBackend()) refreshModelLists(agentStatuses.filter(agent => pending.includes(agent.id)), attempt + 1)
         }, 2000)
       }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     api.getAgents().then(async (data: any[]) => {
-      if (isCancelled()) return
+      if (!sameBackend()) return
       const agentStatuses: AgentStatus[] = data.map(d => typeof d === 'string' ? { id: d, available: true } : d);
       const PREFERRED_ORDER = ['claude', 'codex', 'opencode', 'antigravity', 'oh-my-pi', 'pi', 'hermes', 'openclaw'];
       agentStatuses.sort((a, b) => {
