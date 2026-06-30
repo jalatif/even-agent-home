@@ -763,6 +763,55 @@ section("dispose() — clears refresh timer and aborts in-flight sessions");
     }
 }
 
+section("getHistory() — merges on-disk transcript with in-memory turn (no 'fork')");
+{
+    // Repro for the "fork" appearance: sending a message to an existing
+    // openclaw session used to show ONLY the new turn, because getHistory
+    // short-circuited to the in-memory message log — which was empty/partial
+    // whenever the transcript dir wasn't known at prompt time. The transcript
+    // is authoritative for prior history; getHistory must merge transcript +
+    // in-memory, deduping turns that exist in both.
+    //
+    // 85f66c1c has an on-disk transcript with 3 messages. We prompt it (which
+    // loads those 3 into memory and appends a new user turn + assistant reply),
+    // then assert getHistory returns all 5 with NO duplication of the 3 prior.
+    const encoder = new TextEncoder();
+    const chunks = ['data: {"choices":[{"delta":{"content":"sure thing"}}]}\n\n'];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true, status: 200,
+        body: { getReader() {
+            return { async read() {
+                if (chunks.length === 0) return { done: true, value: undefined };
+                return { done: false, value: encoder.encode(chunks.shift()) };
+            } };
+        } },
+    });
+    try {
+        const events = [];
+        const provider = createOpenClawProvider((sid, msg) => events.push({ sid, msg }));
+        await provider.listSessions(10); // populate knownTranscriptDirs
+        const sid = "85f66c1c-7703-45b5-9c0c-57eddc2405ca";
+        await provider.prompt(sid, "And one more thing", "/tmp/p", "openclaw/main", "off", false);
+        await waitFor(() => events.some((e) => e.msg.type === "result"), "result event for merged-history prompt");
+
+        const hist = provider.getHistory(sid, 50);
+        // 3 transcript turns + 1 new user + 1 new assistant = 5, no dupes.
+        assert.equal(hist.length, 5, `expected 5 merged messages, got ${hist.length}: ${JSON.stringify(hist)}`);
+        assert.equal(hist[0].text, "Build me a CLI todo app in Rust");
+        assert.equal(hist[2].text, "Now add tests please");
+        assert.equal(hist[3].text, "And one more thing", "new user turn appended after transcript history");
+        assert.equal(hist[4].text, "sure thing", "new assistant reply appended");
+        // No (role,text) pair appears more than once — the dedup contract.
+        const keys = hist.map((m) => `${m.role}|${m.text}`);
+        assert.equal(new Set(keys).size, keys.length, "no duplicated messages after merge");
+        ok("getHistory merges transcript + in-memory turn (no fork, no dupes)");
+        provider.dispose();
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+}
+
 // ── Summary ─────────────────────────────────────────────────
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);

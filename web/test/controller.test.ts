@@ -536,3 +536,38 @@ test('polling replaces a stuck "Thinking..." placeholder when the turn ends', as
     globalThis.fetch = originalFetch
   }
 })
+
+test('press on a stuck loading screen recovers to the agents list (double-tap-race recovery)', async () => {
+  __resetApiStateForTests()
+
+  // Simulate the "stuck loading" state: the controller is marooned on `loading`
+  // because a double-tap race in openSessionsList left it there with no
+  // transition handler. A press should recover by re-booting to agents.
+  const controller = new AgentHomeController()
+  ;(controller as unknown as { state: unknown }).state = {
+    screen: 'loading',
+    message: 'Loading openclaw...',
+  }
+
+  // press on loading should now re-boot (skip the transient loading, go
+  // straight to the configure message since no backend is configured).
+  await controller.handleInput({ type: 'press' })
+  assert.equal(controller.getState().screen, 'loading')
+  assert.match(controller.getState().message ?? '', /configure AgentHome/, 'boot() gated on empty config shows the configure message')
+
+  // doublePress on loading still reaches the shutdown path (unchanged).
+  let shownExit = false
+  let screenOff = false
+  const bridgeCtrl = new AgentHomeController({
+    async render() {},
+    async setAudioEnabled() {},
+    async showExitConfirmation() { shownExit = true },
+    async turnScreenOff() { screenOff = true },
+  })
+  ;(bridgeCtrl as unknown as { state: unknown }).state = {
+    screen: 'loading',
+    message: 'Loading openclaw...',
+  }
+  await bridgeCtrl.handleInput({ type: 'doublePress' })
+  assert.ok(shownExit || screenOff, 'doublePress on loading must reach shutdown')
+})

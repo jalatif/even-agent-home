@@ -2,6 +2,7 @@ import { spawn, execSync } from "node:child_process";
 import { openSync, readSync, closeSync } from "node:fs";
 import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from "node:fs";
 import { sortSessionList } from "../shared/sort-sessions.js";
+import { stripAnsi } from "../shared/ansi.js";
 import { resolve, relative, isAbsolute, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { debugLog } from "../debug.js";
@@ -385,11 +386,14 @@ export function createOhMyPiProvider(emit) {
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
             if (!t.trim()) return;
-            // Always accumulate stderr (stripped of ANSI) so finalize() can
-            // surface it as the error message on a silent failure (no output,
-            // no turn_end) — e.g. a provider with no configured API key.
-            stderrBuffer += t.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
-            const lines = t.split('\n').filter(l => l.trim());
+            // Always accumulate stderr (stripped of ALL ANSI/control sequences,
+            // incl. Kitty keyboard-protocol and DEC private-mode codes) so
+            // finalize() can surface it as the error message on a silent
+            // failure (no output, no turn_end). Stripping before logging also
+            // prevents the raw escape bytes from corrupting the host terminal.
+            const clean = stripAnsi(t);
+            stderrBuffer += clean;
+            const lines = clean.split('\n').filter(l => l.trim());
             // oh-my-pi (like pi) writes non-error content to stderr: startup
             // banner, docs paths, ANSI escapes, Bun/Node debug traces. Emitting
             // every stderr line as {type:"error"} made the glasses flash
@@ -402,7 +406,7 @@ export function createOhMyPiProvider(emit) {
                 /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
             const errorLine = lines.find(l => isErrorLine(l));
             if (errorLine) {
-                const errMsg = errorLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+                const errMsg = errorLine.trim();
                 lastError = errMsg;
                 console.error(`[oh-my-pi] stderr (error): ${errMsg}`);
                 safeEmit(emitId, { type: "error", value: errMsg });

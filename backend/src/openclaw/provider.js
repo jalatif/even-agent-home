@@ -377,6 +377,27 @@ export function createOpenClawProvider(emit) {
         return [];
     }
 
+    /**
+     * Merge an in-memory message log (the current turn, possibly not yet
+     * flushed to the transcript) with the authoritative on-disk transcript for
+     * a session. Dedupes by `role|text` so turns that already landed on disk
+     * (and are therefore in BOTH sources) aren't counted twice. Returns the
+     * transcript first, then any in-memory turns not yet on disk, preserving
+     * chronological order within each source.
+     *
+     * This prevents the "fork" appearance: an in-memory session seeded with an
+     * empty/partial log (transcript dir unknown at prompt time) would otherwise
+     * make a resumed session show only the new turn, hiding the prior history.
+     */
+    function mergeHistoryWithTranscript(sessionId, inMemory) {
+        const transcript = loadMessagesFromTranscript(sessionId);
+        if (transcript.length === 0) return inMemory;
+        if (inMemory.length === 0) return transcript;
+        const seen = new Set(transcript.map((m) => `${m.role}|${m.text}`));
+        const extra = inMemory.filter((m) => !seen.has(`${m.role}|${m.text}`));
+        return [...transcript, ...extra];
+    }
+
     async function prompt(phoneSessionId, text, cwd, model, thinking, yolo) {
         const existing = phoneSessionId ? getSession(phoneSessionId) : null;
         if (existing?.busy) {
@@ -386,7 +407,10 @@ export function createOpenClawProvider(emit) {
         const session = existing || {
             id: phoneSessionId || `openclaw-${Date.now()}`,
             busy: true,
-            messages: loadMessagesFromTranscript(phoneSessionId),
+            // In-memory messages use {role, content} (see push calls at lines
+            // 431/543), while loadMessagesFromTranscript returns {role, text}.
+            // Convert so getHistory's m.content reads work on resumed turns.
+            messages: loadMessagesFromTranscript(phoneSessionId).map((m) => ({ role: m.role, content: m.text })),
             partialText: "",
             abortController: null,
             lastError: undefined,
@@ -629,8 +653,19 @@ export function createOpenClawProvider(emit) {
         const max = Math.min(limit || 50, 50);
         if (s) {
             // In-memory session (active or recently active in this process).
-            // Use the in-memory message log; merge with any partial text.
-            const history = s.messages.slice(-max).map((m) => ({ role: m.role, text: m.content }));
+            //
+            // The on-disk transcript is AUTHORITATIVE for persistent history:
+            // an in-memory session may have been seeded with an empty/partial
+            // message log when it was created (e.g. the transcript dir wasn't
+            // known yet at prompt time), so returning only s.messages would
+            // make a resumed session show just the new turn — looking like the
+            // conversation was "forked". Merge the transcript (prior turns)
+            // with the in-memory log (current turn, possibly not flushed to
+            // disk yet), deduping by role+text so already-flushed turns aren't
+            // doubled.
+            const inMem = s.messages.map((m) => ({ role: m.role, text: m.content }));
+            const merged = mergeHistoryWithTranscript(sessionId, inMem);
+            const history = merged.slice(-max);
             if (s.busy && s.partialText) history.push({ role: "assistant", text: s.partialText });
             return history.slice(-max);
         }

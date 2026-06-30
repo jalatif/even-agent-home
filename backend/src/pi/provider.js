@@ -2,6 +2,7 @@ import { spawn, execSync } from "node:child_process";
 import { openSync, readSync, closeSync } from "node:fs";
 import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from "node:fs";
 import { sortSessionList } from "../shared/sort-sessions.js";
+import { stripAnsi } from "../shared/ansi.js";
 import { resolve, relative, isAbsolute, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { debugLog } from "../debug.js";
@@ -457,11 +458,16 @@ function buildArgs(text, piSessionId, model, thinking) {
         proc.stderr.on("data", (chunk) => {
             const t = chunk.toString();
             if (!t.trim()) return;
-            // Always accumulate stderr (stripped of ANSI) so finalize() can
-            // surface it as the error message on a silent failure (no output,
-            // no turn_end) — e.g. "No API key found for minimax".
-            stderrBuffer += t.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
-            const lines = t.split('\n').filter(l => l.trim());
+            // Always accumulate stderr (stripped of ALL ANSI/control sequences,
+            // including Kitty keyboard-protocol and DEC private-mode codes pi
+            // emits) so finalize() can surface it as the error message on a
+            // silent failure (no output, no turn_end) — e.g. "No API key found
+            // for minimax". Stripping before logging is also what prevents pi's
+            // raw escape bytes from being echoed into the host terminal and
+            // corrupting it (the "shell needs kill+restart" bug).
+            const clean = stripAnsi(t);
+            stderrBuffer += clean;
+            const lines = clean.split('\n').filter(l => l.trim());
             // pi writes a LOT of non-error content to stderr: its startup banner
             // (the `────` rule), docs paths (`.../docs/models.md`), and ANSI
             // escape sequences (`^[[?7u`, `^[[?62;22c`). These are NORMAL output,
@@ -477,13 +483,14 @@ function buildArgs(text, piSessionId, model, thinking) {
                 /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
             const errorLine = lines.find(l => isErrorLine(l));
             if (errorLine) {
-                const errMsg = errorLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+                const errMsg = errorLine.trim();
                 lastError = errMsg;
                 console.error(`[pi] stderr [source=stderr]: ${errMsg}`);
                 safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
             } else {
-                // Non-error stderr (banner, docs path, ANSI). Log for debugging
-                // but do NOT surface to the user — it's not an error.
+                // Non-error stderr (banner, docs path). Log for debugging but do
+                // NOT surface to the user — it's not an error. Stripped above so
+                // no raw escape sequence reaches the host terminal.
                 console.log(`[pi] stderr (benign): ${lines[lines.length - 1].trim()}`);
             }
         });

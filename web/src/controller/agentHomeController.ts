@@ -373,6 +373,23 @@ export class AgentHomeController {
       return;
     }
 
+    if (this.state.screen === 'loading') {
+      // `loading` is normally a TRANSIENT screen that a caller (boot,
+      // openSession, openSessionsList) replaces once its async work resolves.
+      // But the navigation stale-guards can maroon the controller here if the
+      // user double-taps back quickly: a second openSessionsList captures
+      // previousState.screen === 'loading', and a subsequent boot() setState
+      // can be swallowed by a stale guard — leaving every other input as a
+      // no-op (the "stuck, can't go back" symptom, esp. with openclaw whose
+      // getSessions is slow). A tap is the user's instinctive escape, so make
+      // it recover: re-boot to land on the agents list. doublePress still
+      // reaches the shutdown path in the block above.
+      if (input.type === 'press' || input.type === 'swipeUp' || input.type === 'swipeDown') {
+        this.boot({ skipLoading: true })
+      }
+      return;
+    }
+
     if (this.state.screen === 'sidebar.agents') {
       if (input.type === 'swipeDown') {
         this.setState({ ...this.state, selectedAgentIndex: Math.min(this.state.agents.length - 1, this.state.selectedAgentIndex + 1) }, { partialRender: true })
