@@ -568,22 +568,16 @@ export class AgentHomeController {
     } catch (e) {
       if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
-      // On error, recover to a screen whose data endpoint is lightweight
-      // and reliably reachable. Restoring to `sidebar.messages` from
-      // `sidebar.messages` would create an infinite loop: doublePress calls
-      // openSessionsList, it fails, catch restores messages, user double-
-      // taps again → same failure → same restore — the user can never leave
-      // (the original "stuck" symptom, esp. with openclaw whose getSessions
-      // is heavier). Break the loop by landing on the agents list instead.
-      // (sidebar.agents → loading → restore is deadlocked for the same
-      // reason when the loading was set by openSessionsList itself, so that
-      // falls through to boot() below.)
+      // On error, don't silently restore the previous screen — show a visible
+      // error so the user knows something went wrong (silent restore from
+      // sidebar.agents looks like "clicking does nothing"). A tap on this
+      // error-loading screen recovers via the loading recovery path (boot).
       if (previousState.screen === 'sidebar.messages' || previousState.screen === 'sidebarSending') {
         await this.boot({ skipLoading: true })
       } else if (previousState.screen === 'sidebar.agents') {
-        this.setState(previousState, { renderBridge: true })
+        this.setState({ screen: 'loading', message: `Could not load ${agent} sessions — agent may be unavailable. Tap to go back.` }, { renderBridge: true })
       } else if (previousState.screen === 'sidebar.sessions') {
-        this.setState(previousState, { renderBridge: true })
+        this.setState({ screen: 'loading', message: `Could not load ${agent} sessions. Tap to go back.` }, { renderBridge: true })
       } else {
         // 'loading' or any other transient screen → go to agents list.
         await this.boot()

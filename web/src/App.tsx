@@ -46,6 +46,7 @@ import './style.css'
 const PREFERRED_DEFAULT_MODEL: Record<string, string> = {
   claude: 'claude-opus-4-8',
   codex: 'gpt-5.5',
+  antigravity: 'gemini-3.5-flash',
 }
 
 function defaultModelFor(agent: string, models: string[]): string {

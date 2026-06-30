@@ -362,9 +362,10 @@ test('stale openSessionsList result cannot overwrite a newer openSession', async
   }
 })
 
-test('failed session-list reload restores the prior sidebar.agents screen', async () => {
-  // Coverage gap #2a: the existing restore test only covers the sidebar.messages
-  // branch. This covers the sidebar.agents branch of the previousState restore.
+test('failed session-list reload from agents shows a visible error loading screen instead of silently restoring', async () => {
+  // From sidebar.agents, a failed openSessionsList should show a visible error
+  // message rather than silently restoring to agents (the silent restore made
+  // it look like "clicking does nothing"). A tap on the error screen recovers.
   __resetApiStateForTests()
   await setApiConfig({
     baseUrl: 'http://backend.test',
@@ -391,16 +392,17 @@ test('failed session-list reload restores the prior sidebar.agents screen', asyn
     }
     await privateController.openSessionsList('openclaw')
 
-    // Should restore to the agents screen, not be stuck on loading.
-    assert.equal(controller.getState().screen, 'sidebar.agents')
-    assert.deepEqual((controller.getState() as { agents?: string[] }).agents, ['openclaw', 'codex'])
+    // Not silently back to agents — visible error screen so the user knows
+    // something went wrong.
+    assert.equal(controller.getState().screen, 'loading')
+    assert.match(controller.getState().message ?? '', /Could not load openclaw sessions/)
   } finally {
+    controller.dispose()
     globalThis.fetch = originalFetch
   }
 })
 
-test('failed session-list reload restores the prior sidebar.sessions screen', async () => {
-  // Coverage gap #2b: the sidebar.sessions branch of the previousState restore.
+test('failed session-list reload from sessions shows a visible error loading screen', async () => {
   __resetApiStateForTests()
   await setApiConfig({
     baseUrl: 'http://backend.test',
@@ -417,11 +419,10 @@ test('failed session-list reload restores the prior sidebar.sessions screen', as
 
   const controller = new AgentHomeController()
   try {
-    const priorSessions = [{ id: 'old-1', title: 'Old Session', state: 'idle' }]
     ;(controller as unknown as { state: unknown }).state = {
       screen: 'sidebar.sessions',
       agent: 'openclaw',
-      sessions: priorSessions,
+      sessions: [{ id: 'old-1', title: 'Old Session', state: 'idle' }],
       selectedSessionIndex: 0,
     }
     const privateController = controller as unknown as {
@@ -429,9 +430,11 @@ test('failed session-list reload restores the prior sidebar.sessions screen', as
     }
     await privateController.openSessionsList('openclaw')
 
-    assert.equal(controller.getState().screen, 'sidebar.sessions')
-    assert.deepEqual((controller.getState() as { sessions?: { id: string }[] }).sessions, priorSessions)
+    // Not silently back to sessions — visible error screen.
+    assert.equal(controller.getState().screen, 'loading')
+    assert.match(controller.getState().message ?? '', /Could not load openclaw sessions/)
   } finally {
+    controller.dispose()
     globalThis.fetch = originalFetch
   }
 })
