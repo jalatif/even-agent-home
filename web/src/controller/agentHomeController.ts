@@ -568,23 +568,25 @@ export class AgentHomeController {
     } catch (e) {
       if (requestId !== this.navigationRequestId) return
       console.error('[openSessionsList]', agent, e)
-      // On error, restore the screen the user was actually on. Direct entry
-      // points (doublePress from messages, agents-list press) capture a real
-      // screen here. The 'loading' screen is a TRANSIENT state set by a caller
-      // (openSession's catch calls us): in that case there is no real prior
-      // screen to restore — both the session load and this list reload failed —
-      // so we fall through to boot() to land on the agents list (a different,
-      // likely-reachable endpoint) rather than restoring a dead 'loading'
-      // screen. We do not boot-loop because boot() fetches a fresh agents list.
+      // On error, recover to a screen whose data endpoint is lightweight
+      // and reliably reachable. Restoring to `sidebar.messages` from
+      // `sidebar.messages` would create an infinite loop: doublePress calls
+      // openSessionsList, it fails, catch restores messages, user double-
+      // taps again → same failure → same restore — the user can never leave
+      // (the original "stuck" symptom, esp. with openclaw whose getSessions
+      // is heavier). Break the loop by landing on the agents list instead.
+      // (sidebar.agents → loading → restore is deadlocked for the same
+      // reason when the loading was set by openSessionsList itself, so that
+      // falls through to boot() below.)
       if (previousState.screen === 'sidebar.messages' || previousState.screen === 'sidebarSending') {
-        this.setState(previousState, { renderBridge: true })
+        await this.boot({ skipLoading: true })
       } else if (previousState.screen === 'sidebar.agents') {
         this.setState(previousState, { renderBridge: true })
       } else if (previousState.screen === 'sidebar.sessions') {
         this.setState(previousState, { renderBridge: true })
       } else {
         // 'loading' or any other transient screen → go to agents list.
-        this.boot()
+        await this.boot()
       }
     }
   }

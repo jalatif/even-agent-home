@@ -132,7 +132,7 @@ test('preserved boot refresh does not blank an active glasses screen', async () 
   }
 })
 
-test('failed session-list reload from an open session keeps the current session visible', async () => {
+test('failed session-list reload from an open session falls forward to agents list instead of deadlocking on messages', async () => {
   __resetApiStateForTests()
   await setApiConfig({
     baseUrl: 'http://backend.test',
@@ -141,15 +141,21 @@ test('failed session-list reload from an open session keeps the current session 
     scrollSpeed: 'medium',
   })
 
+  let fetchCount = 0
   const originalFetch = globalThis.fetch
-  globalThis.fetch = (async () => ({
-    ok: false,
-    status: 502,
-    statusText: 'Bad Gateway',
-    async json() {
-      return { error: 'OpenClaw session list failed' }
-    },
-  })) as typeof fetch
+  globalThis.fetch = (async () => {
+    fetchCount++
+    // Only the sessions-list call fails; agents-list (boot's getAgents) succeeds
+    // so the deadlock-recovery lands on sidebar.agents rather than another error.
+    if (fetchCount <= 1) return {
+      ok: false, status: 502, statusText: 'Bad Gateway',
+      async json() { return { error: 'OpenClaw session list failed' } },
+    }
+    return {
+      ok: true,
+      async json() { return { agents: ['codex'] } },
+    }
+  }) as typeof fetch
 
   const controller = new AgentHomeController()
   try {
@@ -164,9 +170,13 @@ test('failed session-list reload from an open session keeps the current session 
 
     await controller.handleInput({ type: 'doublePress' })
 
-    assert.equal(controller.getState().screen, 'sidebar.messages')
-    assert.equal(controller.getState().agent, 'openclaw')
-    assert.equal(controller.getState().sessionId, 'openclaw-session-1')
+    // The failed sessions-list load no longer restores sidebar.messages (which
+    // deadlocked the user: doublePress → openSessionsList fail → restore messages
+    // → doublePress → fail → …). It now falls forward to the agents list (boot),
+    // which is reliably reachable (getAgents is lighter than getSessions).
+    assert.equal(controller.getState().screen, 'sidebar.agents')
+    assert.equal(controller.getState().agents[0], 'codex')
+    controller.dispose()
   } finally {
     globalThis.fetch = originalFetch
   }
