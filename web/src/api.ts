@@ -9,6 +9,8 @@ import {
   nameFromBaseUrl,
   __resetBackendsStateForTests,
 } from './backends.ts'
+import { pcmChunksToWav } from './audio/wav.ts'
+import { getSttServerUrl } from './sttSettings.ts'
 
 // Empty by default: the settings input shows its placeholder hint
 // (http://<BACKEND_SERVER>:<PORT>) and the app shows its "please configure"
@@ -352,8 +354,18 @@ export class AgentHomeApi {
   }
 
   async transcribeAudio(pcmData: Uint8Array): Promise<string> {
-    // STT is always resolved by the BACKEND. The provider (built-in Whisper,
-    // Deepgram, OpenAI Whisper) is selected by the backend's
+    // Optional global override: if the user configured a Custom STT Server URL
+    // (Settings, not tied to a backend), post a multipart WAV directly to that
+    // server with NO encryption/auth — the custom server has no backend token
+    // to decrypt the encrypted channel, so it must use the plain multipart
+    // contract documented in docs/custom-stt-server.md. Only `.text` is read.
+    const customUrl = getSttServerUrl().trim()
+    if (customUrl) {
+      return await this.transcribeAudioCustom(pcmData, customUrl)
+    }
+
+    // Default: STT is resolved by the active BACKEND. The provider (built-in
+    // Whisper, Deepgram, OpenAI Whisper) is selected by the backend's
     // --stt-provider-url / --stt-provider-key flags, keeping any provider API
     // key server-side only. The frontend just ships the raw PCM over the
     // encrypted bridge channel to /api/transcribe.
@@ -362,5 +374,39 @@ export class AgentHomeApi {
       body: JSON.stringify({ audio: Array.from(pcmData) })
     })
     return data.text || ''
+  }
+
+  /**
+   * Send audio to a user-configured custom STT server (plain multipart WAV,
+   * no encryption/auth). The server must accept `POST /api/transcribe` with a
+   * multipart `audio` field (a WAV file) and return JSON `{ "text": "..." }`.
+   * Non-2xx surfaces a readable error to the user as the transcript error.
+   */
+  private async transcribeAudioCustom(pcmData: Uint8Array, baseUrl: string): Promise<string> {
+    const wav = pcmChunksToWav([pcmData])
+    const form = new FormData()
+    form.append('audio', wav, 'audio.wav')
+    // Normalize the path the same way `apiBaseUrl` does: strip a trailing slash
+    // and any `/api` suffix, then re-append `/api/transcribe`. This lets users
+    // paste either `https://host`, `https://host/`, or `https://host/api`.
+    const normalizedBase = baseUrl.replace(/\/+$/, '').replace(/\/api\/?$/, '')
+    const url = `${normalizedBase}/api/transcribe`
+    let res: Response
+    try {
+      res = await fetch(url, { method: 'POST', body: form })
+    } catch {
+      throw new Error(`Could not reach custom STT server at ${normalizedBase}. Check the STT Server URL in Settings.`)
+    }
+    const text = await res.text().catch(() => '')
+    if (!res.ok) {
+      const detail = text.trim().slice(0, 200)
+      throw new Error(`Custom STT server error ${res.status}${detail ? `: ${detail}` : ''}`)
+    }
+    try {
+      const data = JSON.parse(text)
+      return data.text || ''
+    } catch {
+      throw new Error('Custom STT server returned an invalid (non-JSON) response')
+    }
   }
 }

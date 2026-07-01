@@ -17,6 +17,7 @@ import type { AppState } from './controller/model'
 import { registerBridgeStorage } from './storage'
 import { isBackendConfigured, formatModelName } from './configHelpers'
 import { hydrateSimSettings, emitSettingsSnapshot, isSimSession } from './sim-settings'
+import { hydrateSttServerUrl, setSttServerUrl } from './sttSettings'
 import {
   getBackendsList,
   getActiveBackend,
@@ -120,6 +121,9 @@ export default function App() {
   const [agentConfigs, setAgentConfigs] = useState<Record<string, AgentProviderConfig>>({})
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null)
   const [agentRefreshNonce, setAgentRefreshNonce] = useState(0)
+  // Global STT Server URL override (not tied to a backend). Blank = use the
+  // active backend's built-in STT; non-blank = send audio to a custom server.
+  const [sttServerUrl, setSttServerUrlState] = useState('')
 
   // ---- Multi-backend UI state ----
   // backendsVersion is bumped whenever the registry changes so the list re-renders.
@@ -190,13 +194,15 @@ export default function App() {
     // Hydrate from storage before the bridge is ready so the UI never shows
     // defaults on first paint when persisted values exist.
     void (async () => {
-      const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
+      const [hydratedConfig, hydratedAgentConfigs, hydratedSttUrl] = await Promise.all([
         hydrateApiConfig(),
         hydrateAgentConfigs(),
+        hydrateSttServerUrl(),
       ])
       if (unmounted) return
       setConfig(hydratedConfig)
       setAgentConfigs(hydratedAgentConfigs)
+      setSttServerUrlState(hydratedSttUrl)
       // Re-render so the Backends list reflects the now-hydrated registry.
       bumpBackends()
     })()
@@ -254,13 +260,15 @@ export default function App() {
       // found / Configure backend" even though valid settings ARE persisted.
       // That was the "have to click Save to reload agents" bug.
       void (async () => {
-        const [hydratedConfig, hydratedAgentConfigs] = await Promise.all([
+        const [hydratedConfig, hydratedAgentConfigs, hydratedSttUrl] = await Promise.all([
           hydrateApiConfig(true),
           hydrateAgentConfigs(true),
+          hydrateSttServerUrl(true),
         ])
         if (unmounted) return
         setConfig(hydratedConfig)
         setAgentConfigs(hydratedAgentConfigs)
+        setSttServerUrlState(hydratedSttUrl)
         // Re-render so the Backends list reflects the bridge KV store (the
         // active backend / last-connected is now known).
         bumpBackends()
@@ -304,6 +312,7 @@ export default function App() {
   const handleSaveConfig = () => {
     void setApiConfig(config)
     void saveAgentConfigs(agentConfigs)
+    void setSttServerUrl(sttServerUrl)
     setAgentRefreshNonce(value => value + 1)
     if (controller) controller.boot()
   }
@@ -1141,14 +1150,30 @@ export default function App() {
                 <label htmlFor="yoloToggle" style={{ margin: 0 }}>Yolo Permission Mode</label>
               </div>
               <div className="input-group checkbox-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   id="debugToggle"
-                  checked={config.debugView || false} 
-                  onChange={e => setConfig({...config, debugView: e.target.checked})} 
+                  checked={config.debugView || false}
+                  onChange={e => setConfig({...config, debugView: e.target.checked})}
                   style={{ width: 'auto' }}
                 />
                 <label htmlFor="debugToggle" style={{ margin: 0 }}>Enable Glasses Debug View</label>
+              </div>
+              <div className="input-group" style={{ marginBottom: '15px' }}>
+                <label>STT Server URL (Optional)</label>
+                <input
+                  type="text"
+                  value={sttServerUrl}
+                  onChange={e => setSttServerUrlState(e.target.value)}
+                  placeholder="Use backend default"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-light)', color: 'var(--text-main)', background: 'rgba(15, 23, 42, 0.8)' }}
+                />
+                <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                  Leave blank to use the backend's built-in STT. A custom STT server must expose <code>POST /api/transcribe</code> accepting a WAV <code>audio</code> file and returning <code>{`{"text": "..."}`}</code>.
+                </p>
               </div>
               <button className="btn primary-btn" onClick={handleSaveConfig} style={{ width: '100%', fontSize: '1.1rem', padding: '12px' }}>Save Settings</button>
             </section>

@@ -21,7 +21,7 @@ AgentHome is an Even Realities G2 glasses application that unifies access to mul
 - **Session Management**: 
   - Keeps track of `phoneSessionId -> providerSessionId` mappings for all providers.
   - Filters out empty sessions.
-- **STT Service**: Exposes `/api/transcribe`. Built-in Whisper runs in Node via `@huggingface/transformers` by default; optional Deepgram/OpenAI Whisper proxy providers are selected server-side with backend CLI flags/env vars so provider API keys never reach the glasses client.
+- **STT Service**: Exposes `/api/transcribe`. Built-in Whisper runs in Node via `@huggingface/transformers` by default; optional Deepgram/OpenAI Whisper proxy providers are selected server-side with backend CLI flags/env vars so provider API keys never reach the glasses client. The frontend can **optionally override** this with a global **Custom STT Server URL** setting (`sttServerUrl`, standalone KV key — not per-backend, stored in `web/src/sttSettings.ts`): when set, `AgentHomeApi.transcribeAudio` posts a multipart WAV directly to `${url}/api/transcribe` with **no encryption/auth** (the custom server has no backend token to decrypt the encrypted channel), instead of the backend's encrypted PCM-array channel. Blank = use the backend as above, unchanged. See `docs/custom-stt-server.md`.
 - **Streaming**: Exposes unified SSE (Server-Sent Events) endpoint for real-time `text_delta`, `tool_start`, `tool_end`, and `result` streams.
 - **Model Resolution**: `/api/models` returns cached model lists while provider refreshes happen asynchronously. The `pi` provider normalizes unqualified client aliases through `~/.pi/agent/models.json` before spawning the CLI, avoiding accidental built-in provider credential paths.
 

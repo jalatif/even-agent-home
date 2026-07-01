@@ -16,7 +16,11 @@ phone settings UI and the glasses state-machine renderer.
   enable/disable agents + choose per-agent model/thinking for the active backend.
 - Render the glasses UI through `EvenHubGlassesBridge`.
 - Send voice PCM to the backend `/api/transcribe` endpoint. STT provider
-  selection and API keys are backend-only.
+  selection and API keys are backend-only. Optionally, a global **Custom STT
+  Server URL** setting (`sttServerUrl`, standalone KV key — not per-backend)
+  can override this: when set, audio is posted as a multipart WAV to that
+  server's `/api/transcribe` instead of the backend. See
+  `docs/custom-stt-server.md`.
 - Reconcile provider-rewritten user messages back to clean text
   (`reconcileWrappedUserMessages` in `configHelpers.ts`): openclaw stores resumed
   user prompts on disk as wrapped context blobs, and the controller substitutes
@@ -74,6 +78,13 @@ npm run test:simulator
   integration (openclaw wrapped-blob → clean text).
 - `test/configHelpers.test.ts` — `isBackendConfigured`, `formatModelName`
   (@suffix stripping), `reconcileWrappedUserMessages` unit cases.
+- `test/sttSettings.test.ts` — the global Custom STT Server URL store:
+  persistence round-trip, idempotent hydrate + `force` re-read, trim/clear,
+  `__resetSttStateForTests`.
+- `test/transcribe.test.ts` — `transcribeAudio` branch: custom path posts a
+  multipart WAV to `${url}/api/transcribe` with no encryption/auth (and works
+  with no backend configured); default path uses the backend's encrypted
+  channel unchanged; URL normalization + error surfacing.
 - `test/bridge.test.ts`, `test/formatModelName.test.ts`.
 
 `test:simulator` validates the glasses state-machine and structural render
