@@ -856,7 +856,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid var(--border-light)' }}>
-        <div>
+        <div style={{ textAlign: 'left' }}>
           <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 600, letterSpacing: '-0.5px' }}>
             {activeTab === 'settings' ? 'Settings' : 'Agent Home'}
           </h1>
