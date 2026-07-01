@@ -384,34 +384,39 @@ export function createOhMyPiProvider(emit) {
         });
 
         proc.stderr.on("data", (chunk) => {
-            const t = chunk.toString();
-            if (!t.trim()) return;
-            // Always accumulate stderr (stripped of ALL ANSI/control sequences,
-            // incl. Kitty keyboard-protocol and DEC private-mode codes) so
-            // finalize() can surface it as the error message on a silent
-            // failure (no output, no turn_end). Stripping before logging also
-            // prevents the raw escape bytes from corrupting the host terminal.
-            const clean = stripAnsi(t);
-            stderrBuffer += clean;
-            const lines = clean.split('\n').filter(l => l.trim());
-            // oh-my-pi (like pi) writes non-error content to stderr: startup
-            // banner, docs paths, ANSI escapes, Bun/Node debug traces. Emitting
-            // every stderr line as {type:"error"} made the glasses flash
-            // "Agent Error" briefly on every turn. Only genuine error markers
-            // are surfaced immediately; a non-matching real error is still
-            // caught later by finalize()'s silent-failure detection.
-            const isErrorLine = (l) =>
-                /^\s*error:/i.test(l) ||
-                /^\s*panic:/i.test(l) ||
-                /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
-            const errorLine = lines.find(l => isErrorLine(l));
-            if (errorLine) {
-                const errMsg = errorLine.trim();
-                lastError = errMsg;
-                console.error(`[oh-my-pi] stderr (error): ${errMsg}`);
-                safeEmit(emitId, { type: "error", value: errMsg });
-            } else {
-                console.log(`[oh-my-pi] stderr: ${lines[lines.length - 1].trim()}`);
+            try {
+                const t = chunk.toString();
+                if (!t.trim()) return;
+                // Always accumulate stderr (stripped of ALL ANSI/control sequences,
+                // incl. Kitty keyboard-protocol and DEC private-mode codes) so
+                // finalize() can surface it as the error message on a silent
+                // failure (no output, no turn_end). Stripping before logging also
+                // prevents the raw escape bytes from corrupting the host terminal.
+                const clean = stripAnsi(t);
+                stderrBuffer += clean;
+                const lines = clean.split('\n').filter(l => l.trim());
+                if (lines.length === 0) return;
+                // oh-my-pi (like pi) writes non-error content to stderr: startup
+                // banner, docs paths, ANSI escapes, Bun/Node debug traces. Emitting
+                // every stderr line as {type:"error"} made the glasses flash
+                // "Agent Error" briefly on every turn. Only genuine error markers
+                // are surfaced immediately; a non-matching real error is still
+                // caught later by finalize()'s silent-failure detection.
+                const isErrorLine = (l) =>
+                    /^\s*error:/i.test(l) ||
+                    /^\s*panic:/i.test(l) ||
+                    /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
+                const errorLine = lines.find(l => isErrorLine(l));
+                if (errorLine) {
+                    const errMsg = errorLine.trim();
+                    lastError = errMsg;
+                    console.error(`[oh-my-pi] stderr (error): ${errMsg}`);
+                    safeEmit(emitId, { type: "error", value: errMsg });
+                } else {
+                    console.log(`[oh-my-pi] stderr: ${lines[lines.length - 1].trim()}`);
+                }
+            } catch (dataErr) {
+                console.error(`[oh-my-pi] stderr handler error: ${dataErr.message}`);
             }
         });
 

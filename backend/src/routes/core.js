@@ -36,18 +36,38 @@ const providerFactories = {
 };
 
 const providerInstances = new Map();
+const pendingInstances = new Map();
 
 async function getProviderInstance(name) {
     if (!providerFactories[name]) {
         throw new Error(`Unsupported provider: ${name}`);
     }
-    if (!providerInstances.has(name)) {
-        // A module-type custom agent's factory is async (dynamic import()).
-        // Memoize the resolved instance once the factory settles so later
-        // requests reuse it synchronously.
-        providerInstances.set(name, await providerFactories[name]());
-    }
-    return providerInstances.get(name);
+    // Already resolved: return the memoized provider synchronously.
+    if (providerInstances.has(name)) return providerInstances.get(name);
+    // In-flight (concurrent caller for a module-type custom agent whose factory
+    // is async): share the same import promise instead of starting a second
+    // dynamic `import()`. Without this guard, two concurrent requests for the
+    // same module-type agent double-import the module (wasted work + risk of
+    // double module-level side-effects / divergent provider instances).
+    if (pendingInstances.has(name)) return pendingInstances.get(name);
+
+    // First caller: start the factory and memoize the PROMISE so concurrent
+    // callers join the same import. Built-in providers' factories are sync,
+    // so `Promise.resolve(providerFactories[name]())` resolves on the next
+    // microtask; only module-type custom agents actually benefit from the
+    // promise-sharing.
+    const pending = Promise.resolve(providerFactories[name]()).then((provider) => {
+        providerInstances.set(name, provider);
+        pendingInstances.delete(name);
+        return provider;
+    }).catch((err) => {
+        // Clear the pending entry so a later caller can retry after the user
+        // fixes their module file. Otherwise one failure would cache forever.
+        pendingInstances.delete(name);
+        throw err;
+    });
+    pendingInstances.set(name, pending);
+    return pending;
 }
 
 export async function shutdownProviders() {
@@ -89,6 +109,29 @@ const CLI_BINS = {
 const MODEL_LIST_ARGS = {
     "pi": ["--list-models"],
 };
+
+// Providers whose CLI `models` (or equivalent) does NOT emit a parseable list of
+// model ids:
+//
+//   - openclaw: `openclaw models` prints a config summary
+//     ("Config : ~/.openclaw/openclaw.json", "Agent dir : …", "Default : …")
+//     that parseLineModels happily slurps line-by-line as "models". The frontend
+//     then defaults to models[0] and sends "Config : ~/.openclaw/openclaw.json"
+//     as the `model` field, which the openclaw gateway rejects with
+//     `Unknown agent 'Config : ~/.openclaw/openclaw.json'.`.
+//   - hermes: `hermes models` is not a valid subcommand and exits with
+//     "invalid choice: 'models'", leaking the CLI error into the API response
+//     while the static DEFAULT_MODELS silently survive in cached.models.
+//   - antigravity (`agy`): `agy` is a flags-only CLI with no `models`
+//     subcommand; same leak pattern as hermes.
+//
+// Skipping the CLI refresh here keeps DEFAULT_MODELS (a curated list of valid
+// model ids / agent ids like "openclaw/main" / "hermes-v2" /
+// "claude-opus-4-5@default") so the UI never offers bogus strings and never
+// surfaces a leaked CLI error. Availability is still reported via
+// `command -v <bin>` so the user still sees "Unavailable" when the binary is
+// missing — we only skip the model LIST, not the presence check.
+const MODEL_REFRESH_DISABLED = new Set(["openclaw", "hermes", "antigravity"]);
 
 const DEFAULT_MODELS = {
     claude: ["claude-haiku-4-5","claude-opus-4-5","claude-opus-4-6","claude-opus-4-7","claude-opus-4-8","claude-sonnet-4-5","claude-sonnet-4-6"],
@@ -249,6 +292,22 @@ async function refreshModels(provider, { force = false } = {}) {
     // the built-in hermes/openclaw (null because their models are config-driven)
     // and any custom gateway/cli/module agent with no `bin` availability gate.
     if (bin === null) {
+        cached.models = DEFAULT_MODELS[provider] ?? cached.models ?? [];
+        cached.source = "static";
+        cached.status = "complete";
+        cached.refreshedAt = new Date().toISOString();
+        cached.refreshPromise = null;
+        modelCache.set(provider, cached);
+        return cached;
+    }
+
+    // Providers whose CLI `models` output isn't a parseable model list
+    // (openclaw's `openclaw models` is a config-summary dump, not a model
+    // roster). Skip the refresh and fall back to DEFAULT_MODELS so the UI
+    // never offers bogus strings like "Config : ~/.openclaw/openclaw.json"
+    // as selectable options. Availability was checked above so the UI still
+    // surfaces "Unavailable" when the binary is missing.
+    if (MODEL_REFRESH_DISABLED.has(provider)) {
         cached.models = DEFAULT_MODELS[provider] ?? cached.models ?? [];
         cached.source = "static";
         cached.status = "complete";

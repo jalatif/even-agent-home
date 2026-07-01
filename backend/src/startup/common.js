@@ -177,15 +177,26 @@ export async function startCodexAppServer() {
         // don't force the user to manually find and restart.
         try {
             const pidStr = execSync(`lsof -ti :${CODEX_APP_SERVER_PORT}`, { encoding: "utf8" }).trim();
-            const pid = Number(pidStr.split('\n')[0]); // take first PID if multiple
-            if (pid && !isNaN(pid)) {
-                // Safety check: only kill if this is actually a codex app-server,
-                // not some other process that happened to bind the port.
+            const allPids = pidStr.split('\n').map(s => Number(s.trim())).filter(n => !isNaN(n) && n !== 0);
+            // Iterate through all PIDs that have the port open (LISTEN + any
+            // established client connections — e.g. the bridge itself). Skip
+            // the current process (the bridge has a client WebSocket to the
+            // codex server and would show up in lsof). Find the first PID
+            // that actually IS a codex app-server process and kill it.
+            const ownPid = process.pid;
+            for (const pid of allPids) {
+                if (pid === ownPid) continue;   // skip the bridge itself
                 let procName = "";
+                let procCommand = "";
                 try {
                     procName = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf8" }).trim();
+                    procCommand = execSync(`ps -p ${pid} -o command=`, { encoding: "utf8" }).trim();
                 } catch {}
-                const isCodex = /codex|app-server/i.test(procName);
+                // ps -o comm= only returns the binary name (e.g. "node"), so the
+                // regex wouldn't find "codex|app-server" in "node". Check the full
+                // command line (ps -o command=) too — it will contain the arguments
+                // (e.g. "node /opt/homebrew/bin/codex app-server --listen ...").
+                const isCodex = /codex|app-server/i.test(procName) || /codex|app-server/i.test(procCommand);
                 if (isCodex) {
                     console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} in use by PID ${pid} (${procName || "unknown"}). Reclaiming stale app-server…`);
                     try { process.kill(pid, "SIGTERM"); } catch {}
@@ -196,13 +207,18 @@ export async function startCodexAppServer() {
                     }
                     if (await canBindLocalPort(CODEX_APP_SERVER_PORT)) {
                         console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} freed — continuing.`);
+                        break;
                     } else {
                         console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} still in use after SIGTERM. Try SIGKILL.`);
                         try { process.kill(pid, "SIGKILL"); } catch {}
                         await new Promise(r => setTimeout(r, 500));
+                        if (await canBindLocalPort(CODEX_APP_SERVER_PORT)) {
+                            console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} freed after SIGKILL — continuing.`);
+                            break;
+                        }
                     }
                 } else {
-                    console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} in use by PID ${pid} (${procName || "unknown"}) — NOT a codex process. Will not reclaim.`);
+                    console.error(`[codex] Port ${CODEX_APP_SERVER_PORT} in use by PID ${pid} (${procName || "unknown"}) — NOT a codex process.`);
                 }
             }
         } catch (lsofErr) {

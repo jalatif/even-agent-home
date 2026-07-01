@@ -238,23 +238,27 @@ export function createCliProvider(config, emit) {
         });
 
         proc.stderr.on("data", (chunk) => {
-            const t = chunk.toString();
-            if (!t.trim()) return;
-            const clean = stripAnsi(t);
-            stderrBuffer += clean;
-            const lines = clean.split("\n").filter((l) => l.trim());
-            const isErrorLine = (l) =>
-                /^\s*error:/i.test(l) ||
-                /^\s*panic:/i.test(l) ||
-                /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
-            const errorLine = lines.find((l) => isErrorLine(l));
-            if (errorLine) {
-                const errMsg = errorLine.trim();
-                lastError = errMsg;
-                console.error(`[${name}] stderr: ${errMsg}`);
-                safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
-            } else if (lines.length) {
-                console.log(`[${name}] stderr (benign): ${lines[lines.length - 1].trim()}`);
+            try {
+                const t = chunk.toString();
+                if (!t.trim()) return;
+                const clean = stripAnsi(t);
+                stderrBuffer += clean;
+                const lines = clean.split("\n").filter((l) => l.trim());
+                const isErrorLine = (l) =>
+                    /^\s*error:/i.test(l) ||
+                    /^\s*panic:/i.test(l) ||
+                    /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
+                const errorLine = lines.find((l) => isErrorLine(l));
+                if (errorLine) {
+                    const errMsg = errorLine.trim();
+                    lastError = errMsg;
+                    console.error(`[${name}] stderr: ${errMsg}`);
+                    safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
+                } else if (lines.length) {
+                    console.log(`[${name}] stderr (benign): ${lines[lines.length - 1].trim()}`);
+                }
+            } catch (dataErr) {
+                console.error(`[${name}] stderr handler error: ${dataErr.message}`);
             }
         });
 

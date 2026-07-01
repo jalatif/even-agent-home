@@ -456,42 +456,47 @@ function buildArgs(text, piSessionId, model, thinking) {
         });
 
         proc.stderr.on("data", (chunk) => {
-            const t = chunk.toString();
-            if (!t.trim()) return;
-            // Always accumulate stderr (stripped of ALL ANSI/control sequences,
-            // including Kitty keyboard-protocol and DEC private-mode codes pi
-            // emits) so finalize() can surface it as the error message on a
-            // silent failure (no output, no turn_end) — e.g. "No API key found
-            // for minimax". Stripping before logging is also what prevents pi's
-            // raw escape bytes from being echoed into the host terminal and
-            // corrupting it (the "shell needs kill+restart" bug).
-            const clean = stripAnsi(t);
-            stderrBuffer += clean;
-            const lines = clean.split('\n').filter(l => l.trim());
-            // pi writes a LOT of non-error content to stderr: its startup banner
-            // (the `────` rule), docs paths (`.../docs/models.md`), and ANSI
-            // escape sequences (`^[[?7u`, `^[[?62;22c`). These are NORMAL output,
-            // not errors. Emitting every stderr line as `{type:"error"}` made the
-            // glasses flash "Agent Error" on every turn (and, with some models,
-            // shadow the real response). Only treat stderr as an IMMEDIATE error
-            // if a line is unambiguously an error marker; otherwise just log it.
-            // (A non-matching real error like "No API key found" is still caught
-            // — just later, by finalize()'s silent-failure detection.)
-            const isErrorLine = (l) =>
-                /^\s*error:/i.test(l) ||
-                /^\s*panic:/i.test(l) ||
-                /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
-            const errorLine = lines.find(l => isErrorLine(l));
-            if (errorLine) {
-                const errMsg = errorLine.trim();
-                lastError = errMsg;
-                console.error(`[pi] stderr [source=stderr]: ${errMsg}`);
-                safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
-            } else {
-                // Non-error stderr (banner, docs path). Log for debugging but do
-                // NOT surface to the user — it's not an error. Stripped above so
-                // no raw escape sequence reaches the host terminal.
-                console.log(`[pi] stderr (benign): ${lines[lines.length - 1].trim()}`);
+            try {
+                const t = chunk.toString();
+                if (!t.trim()) return;
+                // Always accumulate stderr (stripped of ALL ANSI/control sequences,
+                // including Kitty keyboard-protocol and DEC private-mode codes pi
+                // emits) so finalize() can surface it as the error message on a
+                // silent failure (no output, no turn_end) — e.g. "No API key found
+                // for minimax". Stripping before logging is also what prevents pi's
+                // raw escape bytes from being echoed into the host terminal and
+                // corrupting it (the "shell needs kill+restart" bug).
+                const clean = stripAnsi(t);
+                stderrBuffer += clean;
+                const lines = clean.split('\n').filter(l => l.trim());
+                if (lines.length === 0) return;
+                // pi writes a LOT of non-error content to stderr: its startup banner
+                // (the `────` rule), docs paths (`.../docs/models.md`), and ANSI
+                // escape sequences (`^[[?7u`, `^[[?62;22c`). These are NORMAL output,
+                // not errors. Emitting every stderr line as `{type:"error"}` made the
+                // glasses flash "Agent Error" on every turn (and, with some models,
+                // shadow the real response). Only treat stderr as an IMMEDIATE error
+                // if a line is unambiguously an error marker; otherwise just log it.
+                // (A non-matching real error like "No API key found" is still caught
+                // — just later, by finalize()'s silent-failure detection.)
+                const isErrorLine = (l) =>
+                    /^\s*error:/i.test(l) ||
+                    /^\s*panic:/i.test(l) ||
+                    /\b(error|fatal|traceback|exception)\b[:\s]/i.test(l);
+                const errorLine = lines.find(l => isErrorLine(l));
+                if (errorLine) {
+                    const errMsg = errorLine.trim();
+                    lastError = errMsg;
+                    console.error(`[pi] stderr [source=stderr]: ${errMsg}`);
+                    safeEmit(emitId, { type: "error", value: errMsg, source: "stderr" });
+                } else {
+                    // Non-error stderr (banner, docs path). Log for debugging but do
+                    // NOT surface to the user — it's not an error. Stripped above so
+                    // no raw escape sequence reaches the host terminal.
+                    console.log(`[pi] stderr (benign): ${lines[lines.length - 1].trim()}`);
+                }
+            } catch (dataErr) {
+                console.error(`[pi] stderr handler error: ${dataErr.message}`);
             }
         });
 
