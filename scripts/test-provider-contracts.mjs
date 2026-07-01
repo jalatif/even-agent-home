@@ -17,8 +17,6 @@ import { spawn } from "node:child_process";
 const PORT = 3489;
 const URL = `http://localhost:${PORT}`;
 
-function postJson(p, b) { return fetch(`${URL}${p}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }).then(r => r.json()); }
-function getJson(p) { return fetch(`${URL}${p}`).then(r => r.json()); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // Providers to exercise. Each entry runs the 4 contract invariants against a
@@ -43,6 +41,8 @@ const PROVIDERS = [
 ];
 
 let passed = 0, failed = 0;
+let backendStderr = "";
+let backendAlive = true;
 
 // ── Start backend ───────────────────────────────────────────
 console.log("Starting backend...");
@@ -53,8 +53,29 @@ console.log("Starting backend...");
 const proc = spawn("node", ["bin/even-agent-home.js", "--token", "harness-test-token", "--host", "127.0.0.1", "--port", String(PORT)], {
     cwd: "backend",
     env: { ...process.env, TEST_MODE: "1", PORT: String(PORT) },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
 });
+// Collect stderr so we can diagnose crashes. Without this (stdio:"ignore"),
+// any uncaught exception in the backend produces opaque "fetch failed" errors
+// with no way to tell what killed it.
+let stderrChunks = [];
+proc.stderr.on("data", (chunk) => { stderrChunks.push(chunk.toString()); });
+proc.on("exit", (code, sig) => {
+    backendAlive = false;
+    if (code !== 0 || sig) {
+        backendStderr = `exit code=${code} signal=${sig}\n` + stderrChunks.join("").trim();
+    }
+});
+// Wrap fetch to surface the backend's stderr dump when it dies mid-suite.
+async function backendFetch(url, init) {
+    if (!backendAlive) {
+        const stderr = backendStderr ? `\n  Backend exit:\n    ${backendStderr.replace(/\n/g, "\n    ")}` : "";
+        throw new Error(`Backend process died mid-test.${stderr}`);
+    }
+    return fetch(url, init);
+}
+function postJson(p, b) { return backendFetch(`${URL}${p}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }).then(r => r.json()); }
+function getJson(p) { return backendFetch(`${URL}${p}`).then(r => r.json()); }
 for (let i = 0; i < 20; i++) {
     try { const r = await fetch(`${URL}/api/agents`); if (r.ok) break; } catch {}
     await sleep(300);
