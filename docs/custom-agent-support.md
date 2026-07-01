@@ -1,6 +1,6 @@
 # Custom Agent Support — Implementation Plan
 
-> **Status:** Design / not yet implemented
+> **Status:** Implemented (v1) — shipped in commits `1737148`, `90039c2`, `d05d821`
 > **Goal:** Let a user add a custom agent by editing a config file — **no
 > backend or frontend code changes** for the common cases, with a clean code
 > escape hatch for the hard ones. A user-facing guide is shipped to

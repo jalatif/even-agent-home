@@ -62,7 +62,7 @@ The bridge auth token is **not** read from the environment — pass it with `--t
 | `EVEN_HOST_MODE` | auto | `tailscale` to bind to the Tailscale interface |
 | `EVEN_HOST_INTERFACE` | auto | Specific network interface to bind to |
 | `EVEN_TERMINAL_NAME` | unset | Friendly name printed in the banner / QR code |
-| `CODEX_APP_SERVER_PORT` | `8765` (or `8766` if `PORT=8765`) | Port the Codex app-server listens on |
+| `CODEX_APP_SERVER_PORT` | `8766` | Port the Codex app-server listens on |
 | `DEBUG` | `0` | If `1`, enable verbose logging |
 | `TEST_MODE` | `0` | If `1`, disable the auth check (used by the integration tests only) |
 | `PROJECT_DIR` | `process.cwd()` | CWD printed in the startup banner |
@@ -84,9 +84,9 @@ Each agent is launched via its own CLI tool that must be on `$PATH` for the corr
 | `opencode` | `opencode` |
 | `hermes` | bundled (no external dep) |
 | `openclaw` | `openclaw` + Gateway HTTP chat endpoint |
-| `antigravity` | `gemini` |
-| `oh-my-pi` | bundled |
-| `pi` | bundled |
+| `antigravity` | `agy` |
+| `oh-my-pi` | `omp` |
+| `pi` | `pi` |
 
 ## Custom agents
 

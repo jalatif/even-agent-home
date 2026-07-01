@@ -100,9 +100,9 @@ agents continue to work.
 | `opencode` | `opencode` |
 | `hermes` | bundled |
 | `openclaw` | `openclaw` + Gateway HTTP chat endpoint |
-| `antigravity` | `gemini` |
-| `oh-my-pi` | bundled |
-| `pi` | bundled |
+| `antigravity` | `agy` |
+| `oh-my-pi` | `omp` |
+| `pi` | `pi` |
 
 You can also add **your own agents** via a config file — no code changes. Three
 tiers: `gateway` (OpenAI-compatible endpoint), `cli` (a streaming-JSONL CLI),
