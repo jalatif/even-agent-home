@@ -1172,7 +1172,7 @@ export default function App() {
                   style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-light)', color: 'var(--text-main)', background: 'rgba(15, 23, 42, 0.8)' }}
                 />
                 <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                  Leave blank to use the backend's built-in STT. A custom STT server must expose <code>POST /api/transcribe</code> accepting a WAV <code>audio</code> file and returning <code>{`{"text": "..."}`}</code>.
+                  Leave blank to use the backend's built-in STT. A custom STT server must expose POST /api/transcribe accepting a WAV audio file and returning {`{"text": "..."}`}.
                 </p>
               </div>
               <button className="btn primary-btn" onClick={handleSaveConfig} style={{ width: '100%', fontSize: '1.1rem', padding: '12px' }}>Save Settings</button>
