@@ -12,6 +12,7 @@ import { createAntigravityProvider } from "../antigravity/provider.js";
 import { CodexAppServerClient } from "../codex/app-server.js";
 import { debugLog } from "../debug.js";
 import { CODEX_APP_SERVER_PORT } from "../startup/common.js";
+import { loadCustomAgentConfigs, factoryForType } from "../providers/loader.js";
 
 const router = Router();
 const emit = (sessionId, msg) => {
@@ -36,12 +37,15 @@ const providerFactories = {
 
 const providerInstances = new Map();
 
-function getProviderInstance(name) {
+async function getProviderInstance(name) {
     if (!providerFactories[name]) {
         throw new Error(`Unsupported provider: ${name}`);
     }
     if (!providerInstances.has(name)) {
-        providerInstances.set(name, providerFactories[name]());
+        // A module-type custom agent's factory is async (dynamic import()).
+        // Memoize the resolved instance once the factory settles so later
+        // requests reuse it synchronously.
+        providerInstances.set(name, await providerFactories[name]());
     }
     return providerInstances.get(name);
 }
@@ -57,7 +61,9 @@ export async function shutdownProviders() {
     await Promise.all(disposals);
 }
 
-const SUPPORTED_PROVIDERS = Object.keys(providerFactories);
+// NOTE: SUPPORTED_PROVIDERS is derived AFTER custom agents are merged into the
+// maps below, so config-file-defined agents appear in the agent list, the
+// availability scan, and the model cache seed automatically.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -99,6 +105,34 @@ const modelCache = new Map(Object.entries(DEFAULT_MODELS).map(([provider, models
     provider,
     { models, source: "static", status: "idle", refreshedAt: null, error: null, available: true, refreshPromise: null }
 ]));
+
+// ---- Custom agents (config-file-defined) ----
+// Load ~/.agent-home/agents.yaml (or .json, or $AGENTHOME_AGENTS_CONFIG) once
+// at module load and merge the entries into the three maps above. Purely
+// ADDITIVE: the `if (providerFactories[name]) continue` guard means built-in
+// providers are never overwritten, and loadCustomAgentConfigs() fail-softs to
+// [] on any error (missing file, bad YAML, invalid entry) — so the zero-config
+// behavior (all built-ins, no custom agents) holds unless the user adds a valid
+// entry. See docs/custom-agent-support.md and docs/custom-agents-guide.md.
+const customAgentConfigs = loadCustomAgentConfigs();
+for (const cfg of customAgentConfigs) {
+    if (providerFactories[cfg.name]) continue;          // never overwrite built-ins / duplicates
+    providerFactories[cfg.name] = factoryForType(cfg, emit);
+    CLI_BINS[cfg.name] = cfg.binGate;                    // null = always available
+    DEFAULT_MODELS[cfg.name] = cfg.models?.length ? cfg.models : (cfg.model ? [cfg.model] : []);
+    modelCache.set(cfg.name, {
+        models: DEFAULT_MODELS[cfg.name],
+        source: "static",
+        status: "idle",
+        refreshedAt: null,
+        error: null,
+        available: true,
+        refreshPromise: null,
+    });
+}
+
+// Derived AFTER the custom-agent merge so config-file agents are included.
+const SUPPORTED_PROVIDERS = Object.keys(providerFactories);
 
 function isAgentAvailable(provider) {
     const bin = CLI_BINS[provider];
@@ -211,7 +245,10 @@ async function refreshModels(provider, { force = false } = {}) {
     }
 
     const bin = CLI_BINS[provider];
-    if (bin === null || provider === "hermes" || provider === "openclaw") {
+    // Any provider whose CLI_BINS entry is null uses a static model list:
+    // the built-in hermes/openclaw (null because their models are config-driven)
+    // and any custom gateway/cli/module agent with no `bin` availability gate.
+    if (bin === null) {
         cached.models = DEFAULT_MODELS[provider] ?? cached.models ?? [];
         cached.source = "static";
         cached.status = "complete";
@@ -314,7 +351,7 @@ router.get("/sessions", async (req, res) => {
         return res.status(400).json({ error: "Invalid or missing agent parameter" });
     }
     
-    const provider = getProviderInstance(providerName);
+    const provider = await getProviderInstance(providerName);
     const cwd = typeof req.query.cwd === "string" && req.query.cwd.trim()
         ? req.query.cwd
         : undefined;
@@ -344,7 +381,7 @@ router.get("/history", async (req, res) => {
         return res.status(400).json({ error: "Missing or invalid sessionId/agent parameter" });
     }
     
-    const provider = getProviderInstance(providerName);
+    const provider = await getProviderInstance(providerName);
     const limit = Math.min(parseInt(req.query.limit) || 50, 50);
     try {
         const history = await provider.getHistory(sessionId, limit);
@@ -363,7 +400,7 @@ router.post("/prompt", async (req, res) => {
         return res.status(400).json({ error: "Invalid or missing provider field" });
     }
     try {
-        const targetProvider = getProviderInstance(provider);
+        const targetProvider = await getProviderInstance(provider);
         const result = await targetProvider.prompt(sessionId, text, cwd, model, thinking, yolo);
         res.status(202).json({ ok: true, sessionId: result.sessionId, provider });
     } catch (err) {
@@ -383,14 +420,14 @@ router.post("/transcribe", async (req, res) => {
     }
 });
 
-router.post("/interrupt", (req, res) => {
+router.post("/interrupt", async (req, res) => {
     const { sessionId, provider } = req.body ?? {};
     if (!sessionId || !provider || !SUPPORTED_PROVIDERS.includes(provider)) {
         return res.status(400).json({ error: "Missing or invalid sessionId/provider" });
     }
-    
+
     try {
-        const targetProvider = getProviderInstance(provider);
+        const targetProvider = await getProviderInstance(provider);
         targetProvider.interrupt(sessionId);
         res.json({ ok: true });
     } catch (err) {
@@ -404,7 +441,7 @@ router.get("/status", async (req, res) => {
     if (!sessionId || !providerName) return res.status(400).json({ error: "Missing sessionId or provider" });
     
     try {
-        const targetProvider = getProviderInstance(providerName);
+        const targetProvider = await getProviderInstance(providerName);
         const status = targetProvider.getStatus(sessionId);
         let state = status?.state;
         if (!state && typeof targetProvider.getSessionStatus === "function") {

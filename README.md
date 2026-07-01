@@ -104,6 +104,12 @@ agents continue to work.
 | `oh-my-pi` | bundled |
 | `pi` | bundled |
 
+You can also add **your own agents** via a config file — no code changes. Three
+tiers: `gateway` (OpenAI-compatible endpoint), `cli` (a streaming-JSONL CLI),
+or `module` (a small JS file for bespoke tools). A template + guide are seeded
+to `~/.agent-home/` on first start. See `docs/custom-agents-guide.md` and
+`backend/README.md` → "Custom agents".
+
 ## Development
 
 ### Backend

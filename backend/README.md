@@ -88,6 +88,47 @@ Each agent is launched via its own CLI tool that must be on `$PATH` for the corr
 | `oh-my-pi` | bundled |
 | `pi` | bundled |
 
+## Custom agents
+
+In addition to the built-in agents above, you can add your **own** agents by
+editing a config file — no code changes required. On first start the backend
+seeds `~/.agent-home/agents.yaml` (with commented examples) and
+`~/.agent-home/README.md` (a full user guide) for you to edit.
+
+There are **three tiers**, from simplest to most powerful:
+
+| Tier | `type` | Use for | Effort |
+| --- | --- | --- | --- |
+| 1 | `gateway` | Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, a proxy) | fill in 4 fields |
+| 2 | `cli` | A command-line tool that streams one JSON object per line (e.g. a `pi`/`oh-my-pi`-family CLI) | fill in fields + an `events` map |
+| 3 | `module` | A bespoke tool a config can't describe (background daemons, polling, SQLite, batched output) — write a small JS file | write a ~30-line module |
+
+Custom agents are **additions only**: they never change or break the built-ins,
+and a malformed entry is skipped (with a logged message) while the rest load.
+
+Quick example (Tier 1 — a local Ollama):
+
+```yaml
+# ~/.agent-home/agents.yaml
+agents:
+  - name: ollama-local
+    type: gateway
+    gatewayUrl: http://127.0.0.1:11434
+    model: llama3.1
+    models: [llama3.1, qwen2.5]
+    apiKey: ""            # leave empty for no-auth local servers
+```
+
+Restart the backend after editing. The full field reference, worked examples for
+all three tiers, troubleshooting, and a copy-paste prompt for generating a Tier 3
+module with an AI coding agent are in `~/.agent-home/README.md` (source:
+`docs/custom-agents-guide.md`). Design rationale: `docs/custom-agent-support.md`.
+
+| Env var | Effect |
+| --- | --- |
+| `AGENTHOME_AGENTS_CONFIG` | Absolute path to your config (`.yaml` or `.json`), overriding the default locations. |
+| `AGENTHOME_AGENTS_NO_SEED=1` | Skip writing the template config + README on first start (for headless/managed installs). |
+
 ## Speech-to-text (voice input)
 
 Voice queries are transcribed server-side by `/api/transcribe`. The engine is selected by the backend's `--stt-provider-url` / `--stt-provider-key` flags (or the matching `AGENTHOME_STT_PROVIDER_*` env vars) — the frontend knows nothing about STT providers and just ships raw PCM to the bridge.
