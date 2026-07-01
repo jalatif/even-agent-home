@@ -72,7 +72,7 @@ agents:
 
 | Field | Required? | What it does |
 |---|---|---|
-| `name` | **yes** | A unique id, lowercase + dashes only (`ollama-local`). Becomes the agent's id in the UI. |
+| `name` | **yes** | A unique id, lowercase + dashes/underscores (`ollama-local`, `openclaw_custom`). Becomes the agent's id in the UI. |
 | `type` | **yes** | Must be `gateway`. |
 | `gatewayUrl` | **yes** | The base URL. Agent Home appends `/v1/chat/completions`. |
 | `model` | **yes** | The default model id to send. |

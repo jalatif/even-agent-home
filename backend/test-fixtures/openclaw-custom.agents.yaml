@@ -1,0 +1,34 @@
+# Example: replicate the built-in `openclaw` agent as a CUSTOM agent via the
+# config-file path. This is a reference fixture for the comparison test
+# (scripts/test-custom-vs-builtin-openclaw.mjs) AND a worked example for users.
+#
+# What this reproduces faithfully (Tier 1 = OpenAI-compatible gateway):
+#   - Prompting + SSE token streaming against OpenClaw's /v1/chat/completions.
+#   - Authorization via the gateway token.
+#   - In-memory conversation history for the active session.
+#
+# What this does NOT reproduce (the built-in `openclaw` provider does these;
+# a plain gateway can't — they need Tier 3 `type: module`, see the comparison
+# test and docs/custom-agent-support.md §1):
+#   - Custom routing headers (x-openclaw-session-key / x-openclaw-agent-id /
+#     x-openclaw-thinking-level).
+#   - `openclaw sessions --all-agents --json` for the session list.
+#   - Transcript-based history (reading <sessionId>.jsonl + dedup merge).
+#
+# Point gatewayUrl/apiKeyEnv at a real OpenClaw gateway to use this for real.
+agents:
+  - name: openclaw_custom
+    type: gateway
+    # The OpenClaw gateway base URL. Matches OPENCLAW_GATEWAY_URL in the
+    # built-in provider. The gateway factory appends /v1/chat/completions.
+    gatewayUrl: http://127.0.0.1:18789
+    # The built-in provider maps "openclaw/main" → agent id "main" and sends it
+    # as the model field. Tier 1 sends `model` verbatim, so use the same id.
+    model: openclaw/main
+    models: [openclaw/main]
+    # Read the gateway token from the same env var the built-in provider uses,
+    # so both agents authenticate identically against the same gateway.
+    apiKeyEnv: OPENCLAW_GATEWAY_TOKEN
+    # bin: null (omitted) = always available. The built-in openclaw gates on the
+    # `openclaw` binary for session listing, but since Tier 1 doesn't list
+    # sessions from the CLI, there's nothing to gate on here.

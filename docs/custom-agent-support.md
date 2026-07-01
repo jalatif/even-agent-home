@@ -178,7 +178,7 @@ loader seeds `agents.yaml` + `README.md` (§2) and reads it back.
 
 | Field | Required | Default | Notes |
 |---|---|---|---|
-| `name` | yes | — | Unique id. `^[a-z][a-z0-9-]*$`. Becomes the `provider` value everywhere. |
+| `name` | yes | — | Unique id. `^[a-z][a-z0-9_-]*$` (lowercase, may use digits, dashes, underscores). Becomes the `provider` value everywhere. |
 | `type` | yes | — | `gateway` \| `cli` \| `module`. |
 | `model` | yes (gateway/cli) | — | Default model id. |
 | `models` | no | `[model]` | Picker list. |
@@ -280,7 +280,7 @@ module for your CLI.)
 
 ### Validation rules (all tiers, at startup)
 - `name` unique across the file AND not colliding with a built-in.
-- `name` matches `^[a-z][a-z0-9-]*$`.
+- `name` matches `^[a-z][a-z0-9_-]*$`.
 - `type` ∈ {`gateway`, `cli`, `module`}.
 - Tier-specific requirements (`gatewayUrl`; `bin`+`args`+`events`; `module`).
 - On failure: log a clear error, **skip that entry** (don't crash), continue.

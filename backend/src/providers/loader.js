@@ -36,7 +36,7 @@ const BUILTIN = new Set([
     "claude", "codex", "opencode", "antigravity",
     "oh-my-pi", "pi", "hermes", "openclaw",
 ]);
-const NAME_RE = /^[a-z][a-z0-9-]*$/;
+const NAME_RE = /^[a-z][a-z0-9_-]*$/;
 const URL_RE = /^https?:\/\/[^\s]+$/i;
 
 // --------------------------- template + guide -------------------------------
